@@ -12,6 +12,7 @@ import {
   X,
 } from "lucide-react";
 import { api } from "../lib/tauri";
+import { APP_VERSION } from "../lib/version";
 import { TelemetrySnapshot, ThemePreference } from "../types/telemetry";
 
 interface TitleBarProps {
@@ -82,6 +83,16 @@ export const TitleBar: React.FC<TitleBarProps> = ({
             <Activity className="w-3.5 h-3.5 stroke-[2.5]" />
           </div>
           <span className="font-semibold text-sm tracking-tight">Pulse</span>
+          <span
+            className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md tabular-nums"
+            style={{
+              backgroundColor: "var(--bg-subtle)",
+              color: "var(--text-muted)",
+              border: "1px solid var(--border-subtle)",
+            }}
+          >
+            v{APP_VERSION}
+          </span>
           <span
             className="text-[11px] font-medium hidden sm:inline"
             style={{ color: "var(--text-muted)" }}

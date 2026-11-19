@@ -12,6 +12,7 @@ import {
   Wrench,
 } from "lucide-react";
 import { formatDuration } from "../lib/format";
+import { APP_VERSION } from "../lib/version";
 import { NavTab, TelemetrySnapshot } from "../types/telemetry";
 
 interface SidebarProps {
@@ -264,8 +265,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
               className="flex items-center justify-between tabular-nums"
               style={{ color: "var(--text-muted)" }}
             >
-              <span>Laufzeit</span>
-              <span>{formatDuration(snapshot.system.uptimeSeconds)}</span>
+              <span>Laufzeit {formatDuration(snapshot.system.uptimeSeconds)}</span>
+              <span className="font-semibold">v{APP_VERSION}</span>
             </div>
           </div>
         )}
