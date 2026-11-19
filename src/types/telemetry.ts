@@ -98,6 +98,7 @@ export interface ProcessEntry {
   subtitle: string;
   category: ProcessCategory;
   cpuPercent: number;
+  gpuPercent: number;
   memoryBytes: number;
   diskReadBytesPerSec: number;
   diskWriteBytesPerSec: number;
@@ -120,7 +121,11 @@ export interface BlameProcess {
   subtitle: string;
   category: ProcessCategory;
   cpuPercent: number;
+  gpuPercent: number;
   memoryBytes: number;
+  diskBytesPerSec: number;
+  netConnections: number;
+  netListeningPorts: number;
 }
 
 export interface HistoryPoint {
@@ -135,6 +140,9 @@ export interface HistoryPoint {
   unaccountedCpuPercent: number;
   topCpu: BlameProcess[];
   topRam: BlameProcess[];
+  topGpu: BlameProcess[];
+  topDisk: BlameProcess[];
+  topNet: BlameProcess[];
 }
 
 export interface TimeRange {

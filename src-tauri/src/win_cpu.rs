@@ -1,16 +1,27 @@
 use std::collections::HashMap;
 
 #[derive(Debug, Clone, Default)]
-pub struct WinProcCpuInfo {
+pub struct WinProcInfo {
     pub cpu_percent: f32,
     pub handle_count: u32,
     pub thread_count: u32,
+    pub disk_read_bytes_per_sec: u64,
+    pub disk_write_bytes_per_sec: u64,
+    pub total_disk_read_bytes: u64,
+    pub total_disk_write_bytes: u64,
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct WinCpuSnapshot {
     pub total_cpu_percent: Option<f32>,
-    pub per_pid: HashMap<u32, WinProcCpuInfo>,
+    pub per_pid: HashMap<u32, WinProcInfo>,
+}
+
+struct PrevProcState {
+    create_time: i64,
+    total_cpu_100ns: u64,
+    read_bytes: u64,
+    write_bytes: u64,
 }
 
 pub struct WinCpuSampler {
@@ -18,8 +29,7 @@ pub struct WinCpuSampler {
     prev_sys_kernel: u64,
     prev_sys_user: u64,
     prev_wall_filetime: u64,
-    // pid -> (create_time, total_cpu_100ns)
-    prev_procs: HashMap<u32, (i64, u64)>,
+    prev_procs: HashMap<u32, PrevProcState>,
     initialized: bool,
 }
 
@@ -61,7 +71,7 @@ impl WinCpuSampler {
             filetime_to_u64(ft)
         };
 
-        let raw_procs = query_all_process_times();
+        let raw_procs = query_all_process_info();
 
         if !sys_ok || raw_procs.is_empty() {
             return WinCpuSnapshot::default();
@@ -78,7 +88,17 @@ impl WinCpuSampler {
             self.prev_wall_filetime = now_ft;
             self.prev_procs = raw_procs
                 .iter()
-                .map(|p| (p.pid, (p.create_time, p.total_time)))
+                .map(|p| {
+                    (
+                        p.pid,
+                        PrevProcState {
+                            create_time: p.create_time,
+                            total_cpu_100ns: p.total_time,
+                            read_bytes: p.read_bytes,
+                            write_bytes: p.write_bytes,
+                        },
+                    )
+                })
                 .collect();
             self.initialized = true;
             return WinCpuSnapshot::default();
@@ -87,8 +107,10 @@ impl WinCpuSampler {
         let delta_idle = sys_idle.saturating_sub(self.prev_sys_idle);
         let delta_kernel = sys_kernel.saturating_sub(self.prev_sys_kernel);
         let delta_user = sys_user.saturating_sub(self.prev_sys_user);
-        // On Windows, GetSystemTimes kernel time INCLUDES idle time.
         let delta_total_sys = delta_kernel.saturating_add(delta_user);
+
+        let elapsed_100ns = now_ft.saturating_sub(self.prev_wall_filetime);
+        let elapsed_secs = (elapsed_100ns as f64 / 10_000_000.0).max(0.1);
 
         let prev_wall = self.prev_wall_filetime;
 
@@ -103,30 +125,63 @@ impl WinCpuSampler {
         };
 
         for p in raw_procs {
-            let cpu_pct = if p.pid == 0 || delta_total_sys == 0 {
-                0.0
-            } else if let Some(&(old_create, old_total)) = self.prev_procs.get(&p.pid) {
-                if old_create == p.create_time {
-                    let delta_proc = p.total_time.saturating_sub(old_total);
-                    ((delta_proc as f64 / delta_total_sys as f64) * 100.0).clamp(0.0, 100.0) as f32
+            let (cpu_pct, read_rate, write_rate) = if p.pid == 0 || delta_total_sys == 0 {
+                (0.0, 0, 0)
+            } else if let Some(old) = self.prev_procs.get(&p.pid) {
+                if old.create_time == p.create_time {
+                    let delta_proc = p.total_time.saturating_sub(old.total_cpu_100ns);
+                    let cpu = ((delta_proc as f64 / delta_total_sys as f64) * 100.0)
+                        .clamp(0.0, 100.0) as f32;
+                    let d_read = p.read_bytes.saturating_sub(old.read_bytes);
+                    let d_write = p.write_bytes.saturating_sub(old.write_bytes);
+                    (
+                        cpu,
+                        (d_read as f64 / elapsed_secs) as u64,
+                        (d_write as f64 / elapsed_secs) as u64,
+                    )
                 } else {
-                    // PID was reused by a brand-new process during this tick
-                    ((p.total_time as f64 / delta_total_sys as f64) * 100.0).clamp(0.0, 100.0) as f32
+                    let cpu = ((p.total_time as f64 / delta_total_sys as f64) * 100.0)
+                        .clamp(0.0, 100.0) as f32;
+                    (
+                        cpu,
+                        (p.read_bytes as f64 / elapsed_secs) as u64,
+                        (p.write_bytes as f64 / elapsed_secs) as u64,
+                    )
                 }
-            } else if p.create_time > 0 && (p.create_time as u64) >= prev_wall.saturating_sub(5_000_000) {
-                // Brand-new process spawned during this tick: attribute its entire accumulated CPU time!
-                ((p.total_time as f64 / delta_total_sys as f64) * 100.0).clamp(0.0, 100.0) as f32
+            } else if p.create_time > 0
+                && (p.create_time as u64) >= prev_wall.saturating_sub(5_000_000)
+            {
+                let cpu = ((p.total_time as f64 / delta_total_sys as f64) * 100.0)
+                    .clamp(0.0, 100.0) as f32;
+                (
+                    cpu,
+                    (p.read_bytes as f64 / elapsed_secs) as u64,
+                    (p.write_bytes as f64 / elapsed_secs) as u64,
+                )
             } else {
-                0.0
+                (0.0, 0, 0)
             };
 
-            next_prev.insert(p.pid, (p.create_time, p.total_time));
+            next_prev.insert(
+                p.pid,
+                PrevProcState {
+                    create_time: p.create_time,
+                    total_cpu_100ns: p.total_time,
+                    read_bytes: p.read_bytes,
+                    write_bytes: p.write_bytes,
+                },
+            );
+
             per_pid.insert(
                 p.pid,
-                WinProcCpuInfo {
+                WinProcInfo {
                     cpu_percent: (cpu_pct * 10.0).round() / 10.0,
                     handle_count: p.handle_count,
                     thread_count: p.thread_count,
+                    disk_read_bytes_per_sec: read_rate,
+                    disk_write_bytes_per_sec: write_rate,
+                    total_disk_read_bytes: p.read_bytes,
+                    total_disk_write_bytes: p.write_bytes,
                 },
             );
         }
@@ -156,12 +211,14 @@ fn filetime_to_u64(ft: windows::Win32::Foundation::FILETIME) -> u64 {
 }
 
 #[cfg(windows)]
-struct RawProcTime {
+struct RawProcInfo {
     pid: u32,
     create_time: i64,
     total_time: u64,
     handle_count: u32,
     thread_count: u32,
+    read_bytes: u64,
+    write_bytes: u64,
 }
 
 #[cfg(windows)]
@@ -183,10 +240,30 @@ struct NtSystemProcessInformation {
     unique_process_id: usize,
     inherited_from_unique_process_id: usize,
     handle_count: u32,
+    session_id: u32,
+    unique_process_key: usize,
+    peak_virtual_size: usize,
+    virtual_size: usize,
+    page_fault_count: u32,
+    peak_working_set_size: usize,
+    working_set_size: usize,
+    quota_peak_paged_pool_usage: usize,
+    quota_paged_pool_usage: usize,
+    quota_peak_non_paged_pool_usage: usize,
+    quota_non_paged_pool_usage: usize,
+    pagefile_usage: usize,
+    peak_pagefile_usage: usize,
+    private_page_count: usize,
+    read_operation_count: i64,
+    write_operation_count: i64,
+    other_operation_count: i64,
+    read_transfer_count: i64,
+    write_transfer_count: i64,
+    other_transfer_count: i64,
 }
 
 #[cfg(windows)]
-fn query_all_process_times() -> Vec<RawProcTime> {
+fn query_all_process_info() -> Vec<RawProcInfo> {
     use std::ffi::c_void;
     use windows::core::{s, w};
     use windows::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress};
@@ -247,12 +324,14 @@ fn query_all_process_times() -> Vec<RawProcTime> {
             let user_t = entry.user_time.max(0) as u64;
             let kernel_t = entry.kernel_time.max(0) as u64;
 
-            results.push(RawProcTime {
+            results.push(RawProcInfo {
                 pid,
                 create_time: entry.create_time,
                 total_time: user_t.saturating_add(kernel_t),
                 handle_count: entry.handle_count,
                 thread_count: entry.number_of_threads,
+                read_bytes: entry.read_transfer_count.max(0) as u64,
+                write_bytes: entry.write_transfer_count.max(0) as u64,
             });
 
             if entry.next_entry_offset == 0 {

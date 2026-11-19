@@ -112,6 +112,7 @@ pub struct ProcessEntry {
     pub subtitle: String,
     pub category: String,
     pub cpu_percent: f32,
+    pub gpu_percent: f32,
     pub memory_bytes: u64,
     pub disk_read_bytes_per_sec: u64,
     pub disk_write_bytes_per_sec: u64,
@@ -136,7 +137,11 @@ pub struct BlameProcess {
     pub subtitle: String,
     pub category: String,
     pub cpu_percent: f32,
+    pub gpu_percent: f32,
     pub memory_bytes: u64,
+    pub disk_bytes_per_sec: u64,
+    pub net_connections: u32,
+    pub net_listening_ports: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -153,6 +158,9 @@ pub struct HistoryPoint {
     pub unaccounted_cpu_percent: f32,
     pub top_cpu: Vec<BlameProcess>,
     pub top_ram: Vec<BlameProcess>,
+    pub top_gpu: Vec<BlameProcess>,
+    pub top_disk: Vec<BlameProcess>,
+    pub top_net: Vec<BlameProcess>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

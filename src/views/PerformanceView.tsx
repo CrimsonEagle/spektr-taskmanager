@@ -20,6 +20,7 @@ import {
   getCategoryMeta,
 } from "../lib/format";
 import {
+  BlameProcess,
   HistoryPoint,
   ProcessCategory,
   TelemetrySnapshot,
@@ -45,8 +46,15 @@ interface AggregatedProcess {
   category: ProcessCategory;
   avgCpu: number;
   maxCpu: number;
+  avgGpu: number;
+  maxGpu: number;
   avgRamBytes: number;
   maxRamBytes: number;
+  avgDiskBytes: number;
+  maxDiskBytes: number;
+  avgNetConns: number;
+  maxNetConns: number;
+  maxNetPorts: number;
   samples: number;
 }
 
@@ -67,7 +75,7 @@ export const PerformanceView: React.FC<PerformanceViewProps> = ({
     [history, windowSec]
   );
 
-  // Jump from Overview spike alert -> select a smart ±2s window around that spike
+  // Jump from Overview spike alert -> select a smart ±2.5s window around that spike
   useEffect(() => {
     if (!initialSpikeTimestamp || slicedHistory.length === 0) return;
     const minTs = slicedHistory[0].timestampMs;
@@ -88,6 +96,9 @@ export const PerformanceView: React.FC<PerformanceViewProps> = ({
       selector: (p: HistoryPoint) => p.cpuPercent,
       current: `${snapshot.cpu.totalUsage.toFixed(1)}%`,
       icon: <Cpu className="w-4 h-4" />,
+      listTitleSingle: "Top CPU-Prozesse zu diesem Zeitpunkt",
+      listTitleRange: "Top CPU-Prozesse im Zeitraum",
+      emptyText: "Keine messbare CPU-Aktivität in diesem Zeitraum.",
     },
     ram: {
       label: "RAM",
@@ -97,6 +108,9 @@ export const PerformanceView: React.FC<PerformanceViewProps> = ({
       selector: (p: HistoryPoint) => p.ramPercent,
       current: `${snapshot.memory.usagePercent.toFixed(1)}%`,
       icon: <MemoryStick className="w-4 h-4" />,
+      listTitleSingle: "Top RAM-Prozesse zu diesem Zeitpunkt",
+      listTitleRange: "Top RAM-Prozesse im Zeitraum",
+      emptyText: "Keine RAM-Prozessdaten verfügbar.",
     },
     gpu: {
       label: "GPU",
@@ -109,6 +123,9 @@ export const PerformanceView: React.FC<PerformanceViewProps> = ({
           ? `${snapshot.gpu.usagePercent.toFixed(0)}%`
           : "–",
       icon: <Gpu className="w-4 h-4" />,
+      listTitleSingle: "Top GPU-Prozesse zu diesem Zeitpunkt",
+      listTitleRange: "Top GPU-Prozesse im Zeitraum",
+      emptyText: "Keine aktive GPU-Engine-Auslastung gemessen.",
     },
     disk: {
       label: "Disk I/O",
@@ -120,6 +137,9 @@ export const PerformanceView: React.FC<PerformanceViewProps> = ({
         snapshot.disk.readBytesPerSec + snapshot.disk.writeBytesPerSec
       ),
       icon: <HardDrive className="w-4 h-4" />,
+      listTitleSingle: "Top Datenträger-Prozesse zu diesem Zeitpunkt",
+      listTitleRange: "Top Datenträger-Prozesse im Zeitraum",
+      emptyText: "Keine aktive Datenträger-Aktivität in diesem Zeitraum.",
     },
     net: {
       label: "Netzwerk",
@@ -131,13 +151,12 @@ export const PerformanceView: React.FC<PerformanceViewProps> = ({
         snapshot.network.rxBytesPerSec + snapshot.network.txBytesPerSec
       ),
       icon: <Wifi className="w-4 h-4" />,
+      listTitleSingle: "Aktivste Netzwerk-Prozesse (Verbindungen)",
+      listTitleRange: "Aktivste Netzwerk-Prozesse im Zeitraum",
+      emptyText: "Keine aktiven Netzwerk-Verbindungen gefunden.",
     },
   }[metric];
 
-  // Determine the points evaluated in the right-hand panel:
-  // 1. If a range is pinned/selected -> evaluate ALL points in that range!
-  // 2. Otherwise if hovering a point -> evaluate that hovered point
-  // 3. Otherwise -> evaluate live latestPoint
   const activePoints = useMemo<HistoryPoint[]>(() => {
     if (selectedRange) {
       const inRange = slicedHistory.filter(
@@ -154,7 +173,6 @@ export const PerformanceView: React.FC<PerformanceViewProps> = ({
   const isRangeMode = activePoints.length > 1;
   const isPinned = selectedRange !== null;
 
-  // Compute rich statistics across activePoints
   const analytics = useMemo(() => {
     const n = activePoints.length;
     const sumCpu = activePoints.reduce((s, p) => s + p.cpuPercent, 0);
@@ -175,7 +193,21 @@ export const PerformanceView: React.FC<PerformanceViewProps> = ({
       ...activePoints.map((p) => p.unaccountedCpuPercent ?? 0)
     );
 
-    // Aggregate Top Processes across the selected range
+    const pickSource = (pt: HistoryPoint): BlameProcess[] => {
+      switch (metric) {
+        case "ram":
+          return pt.topRam ?? [];
+        case "gpu":
+          return pt.topGpu ?? [];
+        case "disk":
+          return pt.topDisk ?? [];
+        case "net":
+          return pt.topNet ?? [];
+        default:
+          return pt.topCpu ?? [];
+      }
+    };
+
     const procMap = new Map<
       string,
       {
@@ -185,22 +217,40 @@ export const PerformanceView: React.FC<PerformanceViewProps> = ({
         category: ProcessCategory;
         cpuSum: number;
         cpuMax: number;
+        gpuSum: number;
+        gpuMax: number;
         ramSum: number;
         ramMax: number;
+        diskSum: number;
+        diskMax: number;
+        netConnSum: number;
+        netConnMax: number;
+        netPortsMax: number;
         seenCount: number;
       }
     >();
 
     for (const pt of activePoints) {
-      const sourceList = metric === "ram" ? pt.topRam : pt.topCpu;
-      for (const bp of sourceList) {
+      for (const bp of pickSource(pt)) {
         const key = `${bp.pid}::${bp.name}`;
         const existing = procMap.get(key);
+        const gpu = bp.gpuPercent ?? 0;
+        const disk = bp.diskBytesPerSec ?? 0;
+        const netC = bp.netConnections ?? 0;
+        const netP = bp.netListeningPorts ?? 0;
+
         if (existing) {
           existing.cpuSum += bp.cpuPercent;
           existing.cpuMax = Math.max(existing.cpuMax, bp.cpuPercent);
+          existing.gpuSum += gpu;
+          existing.gpuMax = Math.max(existing.gpuMax, gpu);
           existing.ramSum += bp.memoryBytes;
           existing.ramMax = Math.max(existing.ramMax, bp.memoryBytes);
+          existing.diskSum += disk;
+          existing.diskMax = Math.max(existing.diskMax, disk);
+          existing.netConnSum += netC;
+          existing.netConnMax = Math.max(existing.netConnMax, netC);
+          existing.netPortsMax = Math.max(existing.netPortsMax, netP);
           existing.seenCount += 1;
           if (!existing.subtitle && bp.subtitle) existing.subtitle = bp.subtitle;
         } else {
@@ -211,8 +261,15 @@ export const PerformanceView: React.FC<PerformanceViewProps> = ({
             category: bp.category,
             cpuSum: bp.cpuPercent,
             cpuMax: bp.cpuPercent,
+            gpuSum: gpu,
+            gpuMax: gpu,
             ramSum: bp.memoryBytes,
             ramMax: bp.memoryBytes,
+            diskSum: disk,
+            diskMax: disk,
+            netConnSum: netC,
+            netConnMax: netC,
+            netPortsMax: netP,
             seenCount: 1,
           });
         }
@@ -228,18 +285,45 @@ export const PerformanceView: React.FC<PerformanceViewProps> = ({
         category: v.category,
         avgCpu: v.cpuSum / n,
         maxCpu: v.cpuMax,
+        avgGpu: v.gpuSum / n,
+        maxGpu: v.gpuMax,
         avgRamBytes: v.ramSum / v.seenCount,
         maxRamBytes: v.ramMax,
+        avgDiskBytes: v.diskSum / n,
+        maxDiskBytes: v.diskMax,
+        avgNetConns: v.netConnSum / n,
+        maxNetConns: v.netConnMax,
+        maxNetPorts: v.netPortsMax,
         samples: v.seenCount,
       })
     );
 
-    if (metric === "ram") {
-      aggregated.sort(
-        (a, b) => b.avgRamBytes - a.avgRamBytes || b.maxRamBytes - a.maxRamBytes
-      );
-    } else {
-      aggregated.sort((a, b) => b.avgCpu - a.avgCpu || b.maxCpu - a.maxCpu);
+    switch (metric) {
+      case "ram":
+        aggregated.sort(
+          (a, b) => b.avgRamBytes - a.avgRamBytes || b.maxRamBytes - a.maxRamBytes
+        );
+        break;
+      case "gpu":
+        aggregated.sort((a, b) => b.avgGpu - a.avgGpu || b.maxGpu - a.maxGpu);
+        break;
+      case "disk":
+        aggregated.sort(
+          (a, b) =>
+            b.avgDiskBytes - a.avgDiskBytes || b.maxDiskBytes - a.maxDiskBytes
+        );
+        break;
+      case "net":
+        aggregated.sort(
+          (a, b) =>
+            b.avgNetConns - a.avgNetConns ||
+            b.maxNetConns - a.maxNetConns ||
+            b.maxNetPorts - a.maxNetPorts
+        );
+        break;
+      default:
+        aggregated.sort((a, b) => b.avgCpu - a.avgCpu || b.maxCpu - a.maxCpu);
+        break;
     }
 
     return {
@@ -280,58 +364,73 @@ export const PerformanceView: React.FC<PerformanceViewProps> = ({
     });
   };
 
+  // Fixed-width metric filter tabs so values updating every second NEVER shift or flicker!
+  const filterTabs = [
+    {
+      id: "cpu" as const,
+      label: "CPU",
+      val: `${snapshot.cpu.totalUsage.toFixed(0)}%`,
+      color: "var(--accent-cpu)",
+      widthClass: "w-[106px]",
+    },
+    {
+      id: "ram" as const,
+      label: "RAM",
+      val: `${snapshot.memory.usagePercent.toFixed(0)}%`,
+      color: "var(--accent-ram)",
+      widthClass: "w-[108px]",
+    },
+    {
+      id: "gpu" as const,
+      label: "GPU",
+      val:
+        snapshot.gpu.usagePercent != null
+          ? `${snapshot.gpu.usagePercent.toFixed(0)}%`
+          : "–",
+      color: "var(--accent-gpu)",
+      widthClass: "w-[106px]",
+    },
+    {
+      id: "disk" as const,
+      label: "Disk",
+      val: formatSpeed(
+        snapshot.disk.readBytesPerSec + snapshot.disk.writeBytesPerSec
+      ),
+      color: "var(--accent-disk)",
+      widthClass: "w-[144px]",
+    },
+    {
+      id: "net" as const,
+      label: "Netz",
+      val: formatSpeed(
+        snapshot.network.rxBytesPerSec + snapshot.network.txBytesPerSec
+      ),
+      color: "var(--accent-net)",
+      widthClass: "w-[146px]",
+    },
+  ];
+
+  const maxNetConnsInList = Math.max(
+    1,
+    ...analytics.topProcesses.map((p) => p.maxNetConns || p.maxNetPorts)
+  );
+  const maxDiskInList = Math.max(
+    1024,
+    ...analytics.topProcesses.map((p) => p.maxDiskBytes)
+  );
+
   return (
     <div className="flex flex-col gap-4 pb-6">
-      {/* Top Bar: Resource Selector + Time Window */}
+      {/* Top Bar: Fixed-width Resource Selector + Time Window */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-1.5 flex-wrap">
-          {(
-            [
-              {
-                id: "cpu",
-                label: "CPU",
-                val: `${snapshot.cpu.totalUsage.toFixed(0)}%`,
-                color: "var(--accent-cpu)",
-              },
-              {
-                id: "ram",
-                label: "RAM",
-                val: `${snapshot.memory.usagePercent.toFixed(0)}%`,
-                color: "var(--accent-ram)",
-              },
-              {
-                id: "gpu",
-                label: "GPU",
-                val:
-                  snapshot.gpu.usagePercent != null
-                    ? `${snapshot.gpu.usagePercent.toFixed(0)}%`
-                    : "–",
-                color: "var(--accent-gpu)",
-              },
-              {
-                id: "disk",
-                label: "Disk",
-                val: formatSpeed(
-                  snapshot.disk.readBytesPerSec + snapshot.disk.writeBytesPerSec
-                ),
-                color: "var(--accent-disk)",
-              },
-              {
-                id: "net",
-                label: "Netzwerk",
-                val: formatSpeed(
-                  snapshot.network.rxBytesPerSec + snapshot.network.txBytesPerSec
-                ),
-                color: "var(--accent-net)",
-              },
-            ] as const
-          ).map((tab) => {
+          {filterTabs.map((tab) => {
             const active = metric === tab.id;
             return (
               <button
                 key={tab.id}
                 onClick={() => setMetric(tab.id)}
-                className="px-3 py-2 rounded-xl border text-xs font-semibold flex items-center gap-2 transition-all cursor-pointer tabular-nums"
+                className={`${tab.widthClass} shrink-0 px-3 py-2 rounded-xl border text-xs font-semibold flex items-center justify-between gap-1.5 transition-colors cursor-pointer tabular-nums`}
                 style={{
                   backgroundColor: active
                     ? "var(--bg-surface-solid)"
@@ -341,12 +440,14 @@ export const PerformanceView: React.FC<PerformanceViewProps> = ({
                   boxShadow: active ? "var(--shadow-card)" : "none",
                 }}
               >
-                <span
-                  className="w-2 h-2 rounded-full"
-                  style={{ backgroundColor: tab.color }}
-                />
-                <span>{tab.label}</span>
-                <span className="opacity-80">{tab.val}</span>
+                <span className="flex items-center gap-1.5 shrink-0">
+                  <span
+                    className="w-2 h-2 rounded-full shrink-0"
+                    style={{ backgroundColor: tab.color }}
+                  />
+                  <span>{tab.label}</span>
+                </span>
+                <span className="opacity-85 text-right truncate">{tab.val}</span>
               </button>
             );
           })}
@@ -354,7 +455,7 @@ export const PerformanceView: React.FC<PerformanceViewProps> = ({
 
         {/* Time Window */}
         <div
-          className="flex items-center p-1 rounded-xl border gap-0.5 text-xs"
+          className="flex items-center p-1 rounded-xl border gap-0.5 text-xs shrink-0"
           style={{
             backgroundColor: "var(--bg-surface)",
             borderColor: "var(--border-subtle)",
@@ -489,7 +590,7 @@ export const PerformanceView: React.FC<PerformanceViewProps> = ({
                   <button
                     key={point.timestampMs}
                     onClick={() => selectSpikeWindow(point.timestampMs)}
-                    className="px-2 py-0.5 rounded-md text-[11px] font-medium cursor-pointer transition-all"
+                    className="px-2 py-0.5 rounded-md text-[11px] font-medium cursor-pointer transition-colors"
                     style={{
                       backgroundColor: isIncluded
                         ? "var(--accent-danger)"
@@ -506,7 +607,7 @@ export const PerformanceView: React.FC<PerformanceViewProps> = ({
           )}
         </div>
 
-        {/* Right Panel: "Was war das gerade?" / Range Analytics */}
+        {/* Right Panel: Metric-specific Top Processes & Range Analytics */}
         <div className="fluent-card p-4 flex flex-col gap-3">
           <div className="flex items-center justify-between gap-2">
             <div>
@@ -538,7 +639,7 @@ export const PerformanceView: React.FC<PerformanceViewProps> = ({
             )}
           </div>
 
-          {/* Summary Stat Cards (Avg + Max Peak in range mode!) */}
+          {/* Summary Stat Cards */}
           <div className="grid grid-cols-3 gap-1.5 text-center tabular-nums">
             <div
               className="p-2 rounded-lg border"
@@ -609,138 +710,196 @@ export const PerformanceView: React.FC<PerformanceViewProps> = ({
               }}
             >
               <span style={{ color: "var(--text-muted)" }}>
-                {metric === "disk" ? "Datenträger Ø / Peak" : "Netzwerk Ø / Peak"}
+                {metric === "disk"
+                  ? isRangeMode
+                    ? "Datenträger (Ø / Peak)"
+                    : "Datenträger Durchsatz"
+                  : isRangeMode
+                    ? "Netzwerk (Ø / Peak)"
+                    : "Netzwerk Durchsatz"}
               </span>
               <span className="font-bold" style={{ color: metricConfig.color }}>
                 {metric === "disk"
-                  ? `${analytics.avgDisk.toFixed(1)} / ${analytics.maxDisk.toFixed(1)} MB/s`
-                  : `${analytics.avgNet.toFixed(0)} / ${analytics.maxNet.toFixed(0)} KB/s`}
+                  ? isRangeMode
+                    ? `${analytics.avgDisk.toFixed(1)} / ${analytics.maxDisk.toFixed(1)} MB/s`
+                    : `${analytics.avgDisk.toFixed(1)} MB/s`
+                  : isRangeMode
+                    ? `${analytics.avgNet.toFixed(0)} / ${analytics.maxNet.toFixed(0)} KB/s`
+                    : `${analytics.avgNet.toFixed(0)} KB/s`}
               </span>
             </div>
           )}
 
-          {/* Top Processes List */}
+          {/* Metric-Specific Top Processes List */}
           <div className="flex flex-col gap-1.5">
             <div
               className="text-[10px] font-semibold uppercase tracking-wider"
               style={{ color: "var(--text-muted)" }}
             >
-              {metric === "ram"
-                ? isRangeMode
-                  ? "Top RAM-Prozesse im Zeitraum"
-                  : "Top RAM-Prozesse zu diesem Zeitpunkt"
-                : isRangeMode
-                  ? "Top CPU-Prozesse im Zeitraum"
-                  : "Top CPU-Prozesse zu diesem Zeitpunkt"}
+              {isRangeMode
+                ? metricConfig.listTitleRange
+                : metricConfig.listTitleSingle}
             </div>
 
-            {analytics.topProcesses.map((bp) => {
-              const cat = getCategoryMeta(bp.category);
-              const barPct =
-                metric === "ram"
-                  ? Math.min(
-                      100,
+            {analytics.topProcesses.length === 0 ? (
+              <div
+                className="p-4 rounded-xl border text-center text-xs"
+                style={{
+                  backgroundColor: "var(--bg-subtle)",
+                  borderColor: "var(--border-subtle)",
+                  color: "var(--text-muted)",
+                }}
+              >
+                {metricConfig.emptyText}
+              </div>
+            ) : (
+              analytics.topProcesses.map((bp) => {
+                const cat = getCategoryMeta(bp.category);
+
+                let primaryVal = "";
+                let secondaryVal = "";
+                let barPct = 4;
+
+                if (metric === "ram") {
+                  primaryVal = isRangeMode
+                    ? `Ø ${formatBytes(bp.avgRamBytes)}`
+                    : formatBytes(bp.avgRamBytes);
+                  if (isRangeMode && bp.maxRamBytes > bp.avgRamBytes * 1.03) {
+                    secondaryVal = `Peak ${formatBytes(bp.maxRamBytes)}`;
+                  }
+                  barPct = Math.min(
+                    100,
+                    Math.max(
+                      4,
                       (bp.avgRamBytes / Math.max(1, snapshot.memory.totalBytes)) *
                         300
                     )
-                  : Math.min(100, Math.max(4, (bp.avgCpu / Math.max(10, analytics.maxCpu)) * 100));
+                  );
+                } else if (metric === "gpu") {
+                  primaryVal = isRangeMode
+                    ? `Ø ${bp.avgGpu.toFixed(1)}%`
+                    : `${bp.avgGpu.toFixed(1)}%`;
+                  if (isRangeMode) {
+                    secondaryVal = `Peak ${bp.maxGpu.toFixed(1)}%`;
+                  }
+                  barPct = Math.min(
+                    100,
+                    Math.max(4, (bp.avgGpu / Math.max(10, analytics.maxGpu)) * 100)
+                  );
+                } else if (metric === "disk") {
+                  primaryVal = isRangeMode
+                    ? `Ø ${formatSpeed(bp.avgDiskBytes)}`
+                    : formatSpeed(bp.avgDiskBytes);
+                  if (isRangeMode) {
+                    secondaryVal = `Peak ${formatSpeed(bp.maxDiskBytes)}`;
+                  }
+                  barPct = Math.min(
+                    100,
+                    Math.max(4, (bp.maxDiskBytes / maxDiskInList) * 100)
+                  );
+                } else if (metric === "net") {
+                  const mainConns = isRangeMode
+                    ? Math.round(bp.avgNetConns)
+                    : bp.maxNetConns;
+                  primaryVal =
+                    mainConns > 0
+                      ? `${mainConns} aktiv`
+                      : `${bp.maxNetPorts} Port${bp.maxNetPorts === 1 ? "" : "s"}`;
+                  if (isRangeMode && bp.maxNetConns > mainConns) {
+                    secondaryVal = `Peak ${bp.maxNetConns}${bp.maxNetPorts > 0 ? ` · ${bp.maxNetPorts}P` : ""}`;
+                  } else if (mainConns > 0 && bp.maxNetPorts > 0) {
+                    secondaryVal = `${bp.maxNetPorts} offene Ports`;
+                  }
+                  barPct = Math.min(
+                    100,
+                    Math.max(
+                      6,
+                      ((bp.maxNetConns || bp.maxNetPorts) / maxNetConnsInList) *
+                        100
+                    )
+                  );
+                } else {
+                  primaryVal = isRangeMode
+                    ? `Ø ${bp.avgCpu.toFixed(1)}%`
+                    : `${bp.avgCpu.toFixed(1)}%`;
+                  if (isRangeMode) {
+                    secondaryVal = `Peak ${bp.maxCpu.toFixed(1)}%`;
+                  }
+                  barPct = Math.min(
+                    100,
+                    Math.max(4, (bp.avgCpu / Math.max(10, analytics.maxCpu)) * 100)
+                  );
+                }
 
-              return (
-                <button
-                  key={bp.key}
-                  onClick={() => onInspectPid(bp.pid)}
-                  className="flex flex-col gap-1 px-2.5 py-2 rounded-xl border text-left hover:bg-[var(--bg-surface-hover)] cursor-pointer transition-colors"
-                  style={{
-                    backgroundColor: "var(--bg-subtle)",
-                    borderColor: "var(--border-subtle)",
-                  }}
-                >
-                  <div className="flex items-center justify-between gap-2 w-full">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <span
-                        className="w-2 h-2 rounded-full shrink-0"
-                        style={{ backgroundColor: cat.color }}
-                      />
-                      <div className="min-w-0">
-                        <div className="text-xs font-semibold truncate">
-                          {bp.name}
+                return (
+                  <button
+                    key={bp.key}
+                    onClick={() => onInspectPid(bp.pid)}
+                    className="flex flex-col gap-1 px-2.5 py-2 rounded-xl border text-left hover:bg-[var(--bg-surface-hover)] cursor-pointer transition-colors"
+                    style={{
+                      backgroundColor: "var(--bg-subtle)",
+                      borderColor: "var(--border-subtle)",
+                    }}
+                  >
+                    <div className="flex items-center justify-between gap-2 w-full">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span
+                          className="w-2 h-2 rounded-full shrink-0"
+                          style={{ backgroundColor: cat.color }}
+                        />
+                        <div className="min-w-0">
+                          <div className="text-xs font-semibold truncate">
+                            {bp.name}
+                          </div>
+                          <div
+                            className="text-[10px] truncate"
+                            style={{ color: "var(--text-muted)" }}
+                          >
+                            PID {bp.pid}
+                            {bp.subtitle ? ` • ${bp.subtitle}` : ""}
+                          </div>
                         </div>
+                      </div>
+
+                      <div className="text-right shrink-0 tabular-nums">
                         <div
-                          className="text-[10px] truncate"
-                          style={{ color: "var(--text-muted)" }}
+                          className="text-xs font-bold"
+                          style={{ color: metricConfig.color }}
                         >
-                          PID {bp.pid}
-                          {bp.subtitle ? ` • ${bp.subtitle}` : ""}
+                          {primaryVal}
                         </div>
+                        {secondaryVal && (
+                          <div
+                            className="text-[10px]"
+                            style={{ color: "var(--text-muted)" }}
+                          >
+                            {secondaryVal}
+                          </div>
+                        )}
                       </div>
                     </div>
 
-                    <div className="text-right shrink-0 tabular-nums">
-                      {metric === "ram" ? (
-                        <>
-                          <div
-                            className="text-xs font-bold"
-                            style={{ color: "var(--accent-ram)" }}
-                          >
-                            {isRangeMode
-                              ? `Ø ${formatBytes(bp.avgRamBytes)}`
-                              : formatBytes(bp.avgRamBytes)}
-                          </div>
-                          {isRangeMode && bp.maxRamBytes > bp.avgRamBytes * 1.03 && (
-                            <div
-                              className="text-[10px]"
-                              style={{ color: "var(--text-muted)" }}
-                            >
-                              Peak {formatBytes(bp.maxRamBytes)}
-                            </div>
-                          )}
-                        </>
-                      ) : (
-                        <>
-                          <div
-                            className="text-xs font-bold"
-                            style={{ color: "var(--accent-cpu)" }}
-                          >
-                            {isRangeMode
-                              ? `Ø ${bp.avgCpu.toFixed(1)}%`
-                              : `${bp.avgCpu.toFixed(1)}%`}
-                          </div>
-                          {isRangeMode && (
-                            <div
-                              className="text-[10px]"
-                              style={{ color: "var(--text-muted)" }}
-                            >
-                              Peak {bp.maxCpu.toFixed(1)}%
-                            </div>
-                          )}
-                        </>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Subtle proportional contribution bar */}
-                  <div
-                    className="h-1 w-full rounded-full overflow-hidden"
-                    style={{ backgroundColor: "var(--bg-surface-solid)" }}
-                  >
                     <div
-                      className="h-full rounded-full"
-                      style={{
-                        width: `${barPct}%`,
-                        backgroundColor:
-                          metric === "ram"
-                            ? "var(--accent-ram)"
-                            : "var(--accent-cpu)",
-                      }}
-                    />
-                  </div>
-                </button>
-              );
-            })}
+                      className="h-1 w-full rounded-full overflow-hidden"
+                      style={{ backgroundColor: "var(--bg-surface-solid)" }}
+                    >
+                      <div
+                        className="h-full rounded-full"
+                        style={{
+                          width: `${barPct}%`,
+                          backgroundColor: metricConfig.color,
+                        }}
+                      />
+                    </div>
+                  </button>
+                );
+              })
+            )}
 
-            {/* Honest residual indicator if sub-second exited processes or kernel DPCs occurred */}
-            {metric !== "ram" &&
-              (analytics.avgUnaccounted >= 4 || analytics.maxUnaccounted >= 12) && (
+            {/* Residual CPU note ONLY on CPU tab */}
+            {metric === "cpu" &&
+              (analytics.avgUnaccounted >= 4 ||
+                analytics.maxUnaccounted >= 12) && (
                 <div
                   className="px-2.5 py-2 rounded-xl border text-[11px] flex items-center justify-between gap-2"
                   style={{
@@ -769,7 +928,6 @@ export const PerformanceView: React.FC<PerformanceViewProps> = ({
 
       {/* Hardware Deep-Dive Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {/* Per-Core Detailed Grid */}
         <div className="fluent-card p-4">
           <div className="flex items-center justify-between mb-3">
             <h4 className="text-sm font-semibold">
@@ -818,7 +976,6 @@ export const PerformanceView: React.FC<PerformanceViewProps> = ({
           </div>
         </div>
 
-        {/* Hardware Specs & Sensors */}
         <div className="fluent-card p-4 flex flex-col gap-3">
           <h4 className="text-sm font-semibold">Hardware & Sensoren</h4>
           <div className="grid grid-cols-2 gap-2.5 text-xs">

@@ -93,35 +93,44 @@ export const TitleBar: React.FC<TitleBarProps> = ({
         {snapshot && (
           <div className="hidden md:flex items-center gap-1.5 ml-2 text-[11px] font-medium tabular-nums">
             <span
-              className="px-2 py-0.5 rounded-full flex items-center gap-1.5"
+              className="px-2 py-0.5 rounded-full flex items-center justify-between gap-1.5 w-[76px] shrink-0"
               style={{
                 backgroundColor: "var(--accent-cpu-soft)",
                 color: "var(--accent-cpu)",
               }}
             >
-              <span className="w-1.5 h-1.5 rounded-full bg-current" />
-              CPU {snapshot.cpu.totalUsage.toFixed(0)}%
+              <span className="flex items-center gap-1.5">
+                <span className="w-1.5 h-1.5 rounded-full bg-current shrink-0" />
+                CPU
+              </span>
+              <span className="text-right">{snapshot.cpu.totalUsage.toFixed(0)}%</span>
             </span>
             <span
-              className="px-2 py-0.5 rounded-full flex items-center gap-1.5"
+              className="px-2 py-0.5 rounded-full flex items-center justify-between gap-1.5 w-[78px] shrink-0"
               style={{
                 backgroundColor: "var(--accent-ram-soft)",
                 color: "var(--accent-ram)",
               }}
             >
-              <span className="w-1.5 h-1.5 rounded-full bg-current" />
-              RAM {snapshot.memory.usagePercent.toFixed(0)}%
+              <span className="flex items-center gap-1.5">
+                <span className="w-1.5 h-1.5 rounded-full bg-current shrink-0" />
+                RAM
+              </span>
+              <span className="text-right">{snapshot.memory.usagePercent.toFixed(0)}%</span>
             </span>
             {snapshot.gpu.available && snapshot.gpu.usagePercent != null && (
               <span
-                className="px-2 py-0.5 rounded-full flex items-center gap-1.5"
+                className="px-2 py-0.5 rounded-full flex items-center justify-between gap-1.5 w-[76px] shrink-0"
                 style={{
                   backgroundColor: "var(--accent-gpu-soft)",
                   color: "var(--accent-gpu)",
                 }}
               >
-                <span className="w-1.5 h-1.5 rounded-full bg-current" />
-                GPU {snapshot.gpu.usagePercent.toFixed(0)}%
+                <span className="flex items-center gap-1.5">
+                  <span className="w-1.5 h-1.5 rounded-full bg-current shrink-0" />
+                  GPU
+                </span>
+                <span className="text-right">{snapshot.gpu.usagePercent.toFixed(0)}%</span>
               </span>
             )}
           </div>

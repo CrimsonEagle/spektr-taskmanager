@@ -128,7 +128,7 @@ impl TelemetryEngine {
             self.components.refresh(true);
         }
 
-        let gpu_metrics = self.gpu.refresh();
+        let (gpu_metrics, gpu_per_pid) = self.gpu.refresh();
 
         let cpus = self.sys.cpus();
         let logical_cores = cpus.len().max(1);
@@ -211,10 +211,24 @@ impl TelemetryEngine {
             let cpu_percent = win_info
                 .map(|w| w.cpu_percent)
                 .unwrap_or_else(|| (proc_.cpu_usage() / logical_cores as f32).clamp(0.0, 100.0));
+            let gpu_percent = gpu_per_pid.get(&pid_u32).copied().unwrap_or(0.0);
             let mem_bytes = proc_.memory();
-            let disk = proc_.disk_usage();
-            total_disk_read = total_disk_read.saturating_add(disk.read_bytes);
-            total_disk_write = total_disk_write.saturating_add(disk.written_bytes);
+            let sys_disk = proc_.disk_usage();
+            let disk_read_sec = win_info
+                .map(|w| w.disk_read_bytes_per_sec)
+                .unwrap_or(sys_disk.read_bytes);
+            let disk_write_sec = win_info
+                .map(|w| w.disk_write_bytes_per_sec)
+                .unwrap_or(sys_disk.written_bytes);
+            let total_disk_read_p = win_info
+                .map(|w| w.total_disk_read_bytes)
+                .unwrap_or(sys_disk.total_read_bytes);
+            let total_disk_write_p = win_info
+                .map(|w| w.total_disk_write_bytes)
+                .unwrap_or(sys_disk.total_written_bytes);
+
+            total_disk_read = total_disk_read.saturating_add(disk_read_sec);
+            total_disk_write = total_disk_write.saturating_add(disk_write_sec);
 
             // Sparkline ring buffer per PID
             let hist = self
@@ -247,11 +261,12 @@ impl TelemetryEngine {
                 subtitle,
                 category,
                 cpu_percent: (cpu_percent * 10.0).round() / 10.0,
+                gpu_percent,
                 memory_bytes: mem_bytes,
-                disk_read_bytes_per_sec: disk.read_bytes,
-                disk_write_bytes_per_sec: disk.written_bytes,
-                total_disk_read_bytes: disk.total_read_bytes,
-                total_disk_write_bytes: disk.total_written_bytes,
+                disk_read_bytes_per_sec: disk_read_sec,
+                disk_write_bytes_per_sec: disk_write_sec,
+                total_disk_read_bytes: total_disk_read_p,
+                total_disk_write_bytes: total_disk_write_p,
                 status: status_str,
                 is_suspended,
                 is_efficiency_mode,
@@ -357,17 +372,41 @@ impl TelemetryEngine {
             interfaces,
         };
 
-        // Listening ports count refreshed every 4 ticks
-        if self.tick_count % 4 == 1 {
-            let empty_map = HashMap::new();
-            let conns = network::list_connections(&empty_map);
-            self.last_listening_ports = conns
-                .iter()
-                .filter(|c| c.state == "LISTENING")
-                .count();
+        // Active TCP/UDP connections per PID (native IP Helper table, < 1ms)
+        let empty_map = HashMap::new();
+        let conns = network::list_connections(&empty_map);
+        let mut net_per_pid: HashMap<u32, (u32, u32)> = HashMap::new();
+        let mut listening_total = 0usize;
+        for c in &conns {
+            let entry = net_per_pid.entry(c.pid).or_insert((0, 0));
+            if c.state == "LISTENING" {
+                listening_total += 1;
+                entry.1 += 1;
+            } else if c.state == "ESTABLISHED" {
+                entry.0 += 1;
+            }
         }
+        self.last_listening_ports = listening_total;
 
-        // Top 8 CPU & RAM blame snapshots for Spike-Blame & Range Analytics
+        let to_blame = |p: &ProcessEntry| -> BlameProcess {
+            let (established, listening) = net_per_pid.get(&p.pid).copied().unwrap_or((0, 0));
+            BlameProcess {
+                pid: p.pid,
+                name: p.name.clone(),
+                subtitle: p.subtitle.clone(),
+                category: p.category.clone(),
+                cpu_percent: p.cpu_percent,
+                gpu_percent: p.gpu_percent,
+                memory_bytes: p.memory_bytes,
+                disk_bytes_per_sec: p
+                    .disk_read_bytes_per_sec
+                    .saturating_add(p.disk_write_bytes_per_sec),
+                net_connections: established,
+                net_listening_ports: listening,
+            }
+        };
+
+        // Top 8 blame snapshots per metric for Spike-Blame & Range Analytics
         let accounted_cpu: f32 = processes.iter().map(|p| p.cpu_percent).sum();
         let unaccounted_cpu = ((total_cpu - accounted_cpu).max(0.0) * 10.0).round() / 10.0;
 
@@ -377,33 +416,46 @@ impl TelemetryEngine {
                 .partial_cmp(&a.cpu_percent)
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
-        let top_cpu: Vec<BlameProcess> = by_cpu
-            .iter()
-            .take(8)
-            .map(|p| BlameProcess {
-                pid: p.pid,
-                name: p.name.clone(),
-                subtitle: p.subtitle.clone(),
-                category: p.category.clone(),
-                cpu_percent: p.cpu_percent,
-                memory_bytes: p.memory_bytes,
-            })
-            .collect();
+        let top_cpu: Vec<BlameProcess> = by_cpu.iter().take(8).map(to_blame).collect();
 
         let mut by_ram = processes.clone();
         by_ram.sort_by(|a, b| b.memory_bytes.cmp(&a.memory_bytes));
-        let top_ram: Vec<BlameProcess> = by_ram
+        let top_ram: Vec<BlameProcess> = by_ram.iter().take(8).map(to_blame).collect();
+
+        let mut by_gpu: Vec<&ProcessEntry> = processes
             .iter()
-            .take(8)
-            .map(|p| BlameProcess {
-                pid: p.pid,
-                name: p.name.clone(),
-                subtitle: p.subtitle.clone(),
-                category: p.category.clone(),
-                cpu_percent: p.cpu_percent,
-                memory_bytes: p.memory_bytes,
+            .filter(|p| p.gpu_percent > 0.0)
+            .collect();
+        by_gpu.sort_by(|a, b| {
+            b.gpu_percent
+                .partial_cmp(&a.gpu_percent)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        let top_gpu: Vec<BlameProcess> = by_gpu.into_iter().take(8).map(to_blame).collect();
+
+        let mut by_disk: Vec<&ProcessEntry> = processes
+            .iter()
+            .filter(|p| p.disk_read_bytes_per_sec + p.disk_write_bytes_per_sec > 0)
+            .collect();
+        by_disk.sort_by(|a, b| {
+            (b.disk_read_bytes_per_sec + b.disk_write_bytes_per_sec)
+                .cmp(&(a.disk_read_bytes_per_sec + a.disk_write_bytes_per_sec))
+        });
+        let top_disk: Vec<BlameProcess> = by_disk.into_iter().take(8).map(to_blame).collect();
+
+        let mut by_net: Vec<&ProcessEntry> = processes
+            .iter()
+            .filter(|p| {
+                let (est, lis) = net_per_pid.get(&p.pid).copied().unwrap_or((0, 0));
+                est > 0 || lis > 0
             })
             .collect();
+        by_net.sort_by(|a, b| {
+            let (ae, al) = net_per_pid.get(&a.pid).copied().unwrap_or((0, 0));
+            let (be, bl) = net_per_pid.get(&b.pid).copied().unwrap_or((0, 0));
+            be.cmp(&ae).then_with(|| bl.cmp(&al))
+        });
+        let top_net: Vec<BlameProcess> = by_net.into_iter().take(8).map(to_blame).collect();
 
         // Detect Spikes dynamically against rolling average of last 10 points
         let avg_recent_cpu = if self.history.len() >= 5 {
@@ -469,6 +521,9 @@ impl TelemetryEngine {
             unaccounted_cpu_percent: unaccounted_cpu,
             top_cpu,
             top_ram,
+            top_gpu,
+            top_disk,
+            top_net,
         };
 
         if self.history.len() >= MAX_HISTORY_POINTS {
