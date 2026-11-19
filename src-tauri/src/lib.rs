@@ -17,7 +17,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use telemetry::TelemetryEngine;
 
 pub struct AppState {
-    pub engine: Arc<Mutex<TelemetryEngine>>,
+    pub engine: Arc<Mutex<Option<TelemetryEngine>>>,
     pub latest: Arc<Mutex<Option<TelemetrySnapshot>>>,
     pub refresh_ms: Arc<Mutex<u64>>,
 }
@@ -32,7 +32,8 @@ fn get_history(state: State<'_, AppState>) -> Vec<HistoryPoint> {
     state
         .engine
         .lock()
-        .map(|e| e.history())
+        .ok()
+        .and_then(|g| g.as_ref().map(|e| e.history()))
         .unwrap_or_default()
 }
 
@@ -58,7 +59,8 @@ fn kill_process_tree(pid: u32, state: State<'_, AppState>) -> ActionResult {
     let parent_map = state
         .engine
         .lock()
-        .map(|e| e.parent_map())
+        .ok()
+        .and_then(|g| g.as_ref().map(|e| e.parent_map()))
         .unwrap_or_default();
     process_ops::kill_process_tree(pid, &parent_map)
 }
@@ -67,8 +69,10 @@ fn kill_process_tree(pid: u32, state: State<'_, AppState>) -> ActionResult {
 fn set_process_suspended(pid: u32, suspend: bool, state: State<'_, AppState>) -> ActionResult {
     let res = process_ops::set_process_suspended(pid, suspend);
     if res.ok {
-        if let Ok(mut engine) = state.engine.lock() {
-            engine.set_suspended_flag(pid, suspend);
+        if let Ok(mut guard) = state.engine.lock() {
+            if let Some(engine) = guard.as_mut() {
+                engine.set_suspended_flag(pid, suspend);
+            }
         }
     }
     res
@@ -83,8 +87,10 @@ fn set_process_priority(pid: u32, level: String) -> ActionResult {
 fn set_efficiency_mode(pid: u32, enable: bool, state: State<'_, AppState>) -> ActionResult {
     let res = process_ops::set_efficiency_mode(pid, enable);
     if res.ok {
-        if let Ok(mut engine) = state.engine.lock() {
-            engine.set_efficiency_flag(pid, enable);
+        if let Ok(mut guard) = state.engine.lock() {
+            if let Some(engine) = guard.as_mut() {
+                engine.set_efficiency_flag(pid, enable);
+            }
         }
     }
     res
@@ -124,8 +130,10 @@ fn apply_quick_profile(profile: String, state: State<'_, AppState>) -> ActionRes
                 if cat == "background" || cat == "browser" {
                     if process_ops::set_efficiency_mode(*pid, true).ok {
                         adjusted += 1;
-                        if let Ok(mut eng) = state.engine.lock() {
-                            eng.set_efficiency_flag(*pid, true);
+                        if let Ok(mut guard) = state.engine.lock() {
+                            if let Some(eng) = guard.as_mut() {
+                                eng.set_efficiency_flag(*pid, true);
+                            }
                         }
                     }
                 }
@@ -145,20 +153,23 @@ fn apply_quick_profile(profile: String, state: State<'_, AppState>) -> ActionRes
             }
         }
         _ => {
-            // Reset to normal
             for (pid, _) in &targets {
                 if process_ops::set_efficiency_mode(*pid, false).ok {
                     adjusted += 1;
-                    if let Ok(mut eng) = state.engine.lock() {
-                        eng.set_efficiency_flag(*pid, false);
+                    if let Ok(mut guard) = state.engine.lock() {
+                        if let Some(eng) = guard.as_mut() {
+                            eng.set_efficiency_flag(*pid, false);
+                        }
                     }
                 }
             }
         }
     }
 
-    if let Ok(mut eng) = state.engine.lock() {
-        eng.set_active_profile(profile.clone());
+    if let Ok(mut guard) = state.engine.lock() {
+        if let Some(eng) = guard.as_mut() {
+            eng.set_active_profile(profile.clone());
+        }
     }
 
     let label = match profile.as_str() {
@@ -178,7 +189,8 @@ fn get_network_connections(state: State<'_, AppState>) -> Vec<NetworkConnectionE
     let lookup = state
         .engine
         .lock()
-        .map(|e| e.process_lookup())
+        .ok()
+        .and_then(|g| g.as_ref().map(|e| e.process_lookup()))
         .unwrap_or_default();
     network::list_connections(&lookup)
 }
@@ -188,7 +200,8 @@ fn check_file_locks(path: String, state: State<'_, AppState>) -> Result<Vec<File
     let names = state
         .engine
         .lock()
-        .map(|e| e.process_name_map())
+        .ok()
+        .and_then(|g| g.as_ref().map(|e| e.process_name_map()))
         .unwrap_or_default();
     file_lock::find_file_locks(&path, &names)
 }
@@ -268,19 +281,10 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let engine = Arc::new(Mutex::new(TelemetryEngine::new()));
+    // Keep the main UI thread 100% free of MTA COM/WMI/DXGI calls so Tauri's OleInitialize (STA) succeeds.
+    let engine: Arc<Mutex<Option<TelemetryEngine>>> = Arc::new(Mutex::new(None));
     let latest: Arc<Mutex<Option<TelemetrySnapshot>>> = Arc::new(Mutex::new(None));
     let refresh_ms = Arc::new(Mutex::new(1000u64));
-
-    // Collect an immediate warm-up snapshot
-    {
-        if let Ok(mut eng) = engine.lock() {
-            let snap = eng.collect();
-            if let Ok(mut lat) = latest.lock() {
-                *lat = Some(snap);
-            }
-        }
-    }
 
     let bg_engine = Arc::clone(&engine);
     let bg_latest = Arc::clone(&latest);
@@ -297,27 +301,39 @@ pub fn run() {
             let _ = setup_tray(app.handle());
 
             let handle = app.handle().clone();
-            tauri::async_runtime::spawn(async move {
-                loop {
-                    let delay = bg_refresh.lock().map(|g| *g).unwrap_or(1000);
-                    tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
-
-                    let engine_clone = Arc::clone(&bg_engine);
-                    let snap_opt = tokio::task::spawn_blocking(move || {
-                        engine_clone.lock().ok().map(|mut eng| eng.collect())
-                    })
-                    .await
-                    .ok()
-                    .flatten();
-
-                    if let Some(snap) = snap_opt {
-                        if let Ok(mut lat) = bg_latest.lock() {
-                            *lat = Some(snap.clone());
-                        }
-                        let _ = handle.emit("telemetry-update", &snap);
+            std::thread::Builder::new()
+                .name("pulse-telemetry".into())
+                .spawn(move || {
+                    let mut eng = TelemetryEngine::new();
+                    // Short warm-up sleep so initial CPU delta is accurate
+                    std::thread::sleep(std::time::Duration::from_millis(200));
+                    let first_snap = eng.collect();
+                    if let Ok(mut lat) = bg_latest.lock() {
+                        *lat = Some(first_snap.clone());
                     }
-                }
-            });
+                    if let Ok(mut guard) = bg_engine.lock() {
+                        *guard = Some(eng);
+                    }
+                    let _ = handle.emit("telemetry-update", &first_snap);
+
+                    loop {
+                        let delay = bg_refresh.lock().map(|g| *g).unwrap_or(1000);
+                        std::thread::sleep(std::time::Duration::from_millis(delay));
+
+                        let snap_opt = bg_engine
+                            .lock()
+                            .ok()
+                            .and_then(|mut guard| guard.as_mut().map(|e| e.collect()));
+
+                        if let Some(snap) = snap_opt {
+                            if let Ok(mut lat) = bg_latest.lock() {
+                                *lat = Some(snap.clone());
+                            }
+                            let _ = handle.emit("telemetry-update", &snap);
+                        }
+                    }
+                })
+                .expect("Telemetrie-Thread konnte nicht gestartet werden");
 
             Ok(())
         })
