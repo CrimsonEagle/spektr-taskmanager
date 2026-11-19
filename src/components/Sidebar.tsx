@@ -141,11 +141,28 @@ export const Sidebar: React.FC<SidebarProps> = ({
             borderColor: "var(--border-subtle)",
           }}
         >
-          <div
-            className="text-[11px] font-semibold uppercase tracking-wider mb-2 px-0.5"
-            style={{ color: "var(--text-muted)" }}
-          >
-            Schnellprofil
+          <div className="flex items-center justify-between mb-2 px-0.5">
+            <span
+              className="text-[11px] font-semibold uppercase tracking-wider"
+              style={{ color: "var(--text-muted)" }}
+            >
+              Schnellprofil
+            </span>
+            {activeProfile !== "normal" && (
+              <span
+                className="flex items-center gap-1 text-[10px] font-semibold"
+                style={{
+                  color:
+                    activeProfile === "eco"
+                      ? "var(--accent-gpu)"
+                      : "var(--accent-disk)",
+                }}
+                title="Überwacht laufend neu gestartete Prozesse & aktive 3D-Spiele"
+              >
+                <span className="w-1.5 h-1.5 rounded-full bg-current animate-pulse-soft" />
+                Auto
+              </span>
+            )}
           </div>
           <div className="grid grid-cols-3 gap-1">
             {(
@@ -155,18 +172,24 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   label: "Normal",
                   icon: <Gauge className="w-3.5 h-3.5" />,
                   color: "var(--accent-cpu)",
+                  tooltip:
+                    "Standard-Modus: Setzt alle angepassten Prioritäten & den Eco-Modus wieder zurück.",
                 },
                 {
                   id: "eco",
                   label: "Eco",
                   icon: <Leaf className="w-3.5 h-3.5" />,
                   color: "var(--accent-gpu)",
+                  tooltip:
+                    "Eco-Modus (Auto): Aktiviert Windows-11-EcoQoS für Browser & Hintergrund-Apps – auch automatisch für neu gestartete Prozesse.",
                 },
                 {
                   id: "gaming",
                   label: "Boost",
                   icon: <Flame className="w-3.5 h-3.5" />,
                   color: "var(--accent-disk)",
+                  tooltip:
+                    "Boost-Modus (Auto): Priorisiert Spiele & aktive 3D-Apps (>15% GPU) auf Hoch und drosselt Hintergrundtasks – erkennt auch nachträglich gestartete Spiele automatisch.",
                 },
               ] as const
             ).map((p) => {
@@ -175,7 +198,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 <button
                   key={p.id}
                   onClick={() => onApplyProfile(p.id)}
-                  className="flex flex-col items-center gap-1 py-1.5 px-1 rounded-lg text-[11px] font-medium transition-all cursor-pointer"
+                  title={p.tooltip}
+                  className="flex flex-col items-center gap-1 py-1.5 px-1 rounded-lg text-[11px] font-medium transition-colors cursor-pointer"
                   style={{
                     backgroundColor: selected
                       ? "var(--bg-surface-active)"
@@ -192,6 +216,32 @@ export const Sidebar: React.FC<SidebarProps> = ({
               );
             })}
           </div>
+
+          {activeProfile !== "normal" && snapshot && (
+            <div
+              className="mt-2 pt-2 border-t text-[10px] leading-snug tabular-nums flex items-center justify-between"
+              style={{
+                borderColor: "var(--border-subtle)",
+                color: "var(--text-muted)",
+              }}
+            >
+              {activeProfile === "gaming" ? (
+                <>
+                  <span>
+                    {snapshot.system.profileBoostedCount} geboostet ·{" "}
+                    {Math.max(
+                      0,
+                      snapshot.system.profileManagedCount -
+                        snapshot.system.profileBoostedCount
+                    )}{" "}
+                    gedrosselt
+                  </span>
+                </>
+              ) : (
+                <span>{snapshot.system.profileManagedCount} Prozesse im Eco</span>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Host & Uptime compact footer */}

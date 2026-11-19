@@ -109,74 +109,29 @@ fn restart_explorer() -> ActionResult {
 
 #[tauri::command]
 fn apply_quick_profile(profile: String, state: State<'_, AppState>) -> ActionResult {
-    let self_pid = std::process::id();
-    let targets: Vec<(u32, String)> = state
+    let procs = state
         .latest
         .lock()
         .ok()
         .and_then(|g| g.clone())
-        .map(|snap| {
-            snap.processes
-                .into_iter()
-                .filter(|p| p.pid != self_pid && p.category != "system")
-                .map(|p| (p.pid, p.category))
-                .collect()
-        })
+        .map(|snap| snap.processes)
         .unwrap_or_default();
 
-    let mut adjusted = 0usize;
-    match profile.as_str() {
-        "eco" => {
-            for (pid, cat) in &targets {
-                if cat == "background" || cat == "browser" {
-                    if process_ops::set_efficiency_mode(*pid, true).ok {
-                        adjusted += 1;
-                        if let Ok(mut guard) = state.engine.lock() {
-                            if let Some(eng) = guard.as_mut() {
-                                eng.set_efficiency_flag(*pid, true);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        "gaming" => {
-            for (pid, cat) in &targets {
-                if cat == "background" {
-                    if process_ops::set_process_priority(*pid, "below_normal").ok {
-                        adjusted += 1;
-                    }
-                } else if cat == "game" {
-                    if process_ops::set_process_priority(*pid, "high").ok {
-                        adjusted += 1;
-                    }
-                }
-            }
-        }
-        _ => {
-            for (pid, _) in &targets {
-                if process_ops::set_efficiency_mode(*pid, false).ok {
-                    adjusted += 1;
-                    if let Ok(mut guard) = state.engine.lock() {
-                        if let Some(eng) = guard.as_mut() {
-                            eng.set_efficiency_flag(*pid, false);
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    if let Ok(mut guard) = state.engine.lock() {
-        if let Some(eng) = guard.as_mut() {
-            eng.set_active_profile(profile.clone());
-        }
-    }
+    let (boosted, other_count) = state
+        .engine
+        .lock()
+        .ok()
+        .and_then(|mut guard| guard.as_mut().map(|eng| eng.apply_profile(&profile, &procs)))
+        .unwrap_or((0, 0));
 
     let label = match profile.as_str() {
-        "eco" => format!("Eco-Profil aktiv ({adjusted} Hintergrundprozesse gedrosselt)."),
-        "gaming" => format!("Gaming-Profil aktiv ({adjusted} Prozesse optimiert)."),
-        _ => format!("Standard-Profil wiederhergestellt ({adjusted} Prozesse normalisiert)."),
+        "eco" => format!(
+            "Eco-Profil aktiv ({other_count} gedrosselt) — neue Hintergrund-Apps werden automatisch verwaltet."
+        ),
+        "gaming" => format!(
+            "Boost-Profil aktiv ({boosted} geboostet, {other_count} gedrosselt) — neue Spiele & 3D-Apps werden automatisch priorisiert."
+        ),
+        _ => format!("Standard-Profil wiederhergestellt ({other_count} Prozesse zurückgesetzt)."),
     };
 
     ActionResult {

@@ -26,6 +26,8 @@ pub struct TelemetryEngine {
     suspended_pids: HashSet<u32>,
     efficiency_pids: HashSet<u32>,
     active_profile: String,
+    profile_managed_pids: HashMap<u32, &'static str>,
+    gpu_active_streak: HashMap<u32, u8>,
     last_listening_ports: usize,
     tick_count: u64,
 }
@@ -52,6 +54,8 @@ impl TelemetryEngine {
             suspended_pids: HashSet::new(),
             efficiency_pids: HashSet::new(),
             active_profile: "normal".to_string(),
+            profile_managed_pids: HashMap::new(),
+            gpu_active_streak: HashMap::new(),
             last_listening_ports: 0,
             tick_count: 0,
         }
@@ -73,8 +77,90 @@ impl TelemetryEngine {
         }
     }
 
-    pub fn set_active_profile(&mut self, profile: String) {
-        self.active_profile = profile;
+    pub fn apply_profile(&mut self, profile: &str, current_procs: &[ProcessEntry]) -> (usize, usize) {
+        // First reset any previously profile-managed PIDs back to normal
+        let prev_pids: Vec<(u32, &'static str)> = self.profile_managed_pids.drain().collect();
+        let mut reset_count = 0usize;
+        for (pid, mode) in prev_pids {
+            let res = if mode == "eco" {
+                self.efficiency_pids.remove(&pid);
+                process_ops::set_efficiency_mode(pid, false)
+            } else {
+                process_ops::set_process_priority(pid, "normal")
+            };
+            if res.ok {
+                reset_count += 1;
+            }
+        }
+
+        self.active_profile = match profile {
+            "eco" => "eco".to_string(),
+            "gaming" => "gaming".to_string(),
+            _ => "normal".to_string(),
+        };
+
+        if self.active_profile == "normal" {
+            return (0, reset_count);
+        }
+
+        self.enforce_active_profile(current_procs)
+    }
+
+    fn enforce_active_profile(&mut self, procs: &[ProcessEntry]) -> (usize, usize) {
+        if self.active_profile == "normal" {
+            return (0, 0);
+        }
+
+        let self_pid = std::process::id();
+        let mut boosted = 0usize;
+        let mut throttled = 0usize;
+
+        for p in procs {
+            if p.pid == self_pid || p.pid <= 4 || p.category == "system" {
+                continue;
+            }
+
+            let existing = self.profile_managed_pids.get(&p.pid).copied();
+
+            match self.active_profile.as_str() {
+                "eco" => {
+                    if existing.is_none()
+                        && (p.category == "background" || p.category == "browser")
+                    {
+                        if process_ops::set_efficiency_mode(p.pid, true).ok {
+                            self.efficiency_pids.insert(p.pid);
+                            self.profile_managed_pids.insert(p.pid, "eco");
+                            throttled += 1;
+                        }
+                    }
+                }
+                "gaming" => {
+                    // Auto-detect games via category OR sustained GPU load (>15% for >=2 ticks) on non-browser/non-dev apps
+                    let gpu_streak = self.gpu_active_streak.get(&p.pid).copied().unwrap_or(0);
+                    let is_active_3d_app = gpu_streak >= 2
+                        && p.category != "browser"
+                        && p.category != "dev";
+                    let should_boost = p.category == "game" || is_active_3d_app;
+
+                    if should_boost {
+                        if existing != Some("high") {
+                            if process_ops::set_process_priority(p.pid, "high").ok {
+                                self.profile_managed_pids.insert(p.pid, "high");
+                                boosted += 1;
+                            }
+                        }
+                    } else if existing.is_none() && p.category == "background" {
+                        if process_ops::set_process_priority(p.pid, "below_normal").ok {
+                            self.profile_managed_pids.insert(p.pid, "below_normal");
+                            throttled += 1;
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        (boosted, throttled)
     }
 
     pub fn history(&self) -> Vec<HistoryPoint> {
@@ -283,6 +369,29 @@ impl TelemetryEngine {
         self.proc_cpu_history.retain(|k, _| active_pids.contains(k));
         self.suspended_pids.retain(|k| active_pids.contains(k));
         self.efficiency_pids.retain(|k| active_pids.contains(k));
+        self.profile_managed_pids
+            .retain(|k, _| active_pids.contains(k));
+        self.gpu_active_streak
+            .retain(|k, _| active_pids.contains(k));
+
+        // Update GPU activity streak for smart 3D/game auto-detection in Boost mode
+        for p in &processes {
+            if p.gpu_percent >= 15.0 {
+                let s = self.gpu_active_streak.entry(p.pid).or_insert(0);
+                *s = s.saturating_add(1);
+            } else if let Some(s) = self.gpu_active_streak.get_mut(&p.pid) {
+                *s = s.saturating_sub(1);
+            }
+        }
+
+        // Continuously enforce active Eco / Boost profile on newly started processes & active 3D games
+        if self.active_profile != "normal" {
+            let _ = self.enforce_active_profile(&processes);
+            // Sync efficiency flags back into the snapshot's ProcessEntry list
+            for p in &mut processes {
+                p.is_efficiency_mode = self.efficiency_pids.contains(&p.pid);
+            }
+        }
 
         // Disks
         let mut drives = Vec::new();
@@ -533,6 +642,13 @@ impl TelemetryEngine {
 
         let battery = query_battery();
 
+        let profile_managed_count = self.profile_managed_pids.len();
+        let profile_boosted_count = self
+            .profile_managed_pids
+            .values()
+            .filter(|&&m| m == "high")
+            .count();
+
         let system_summary = SystemSummary {
             hostname: System::host_name().unwrap_or_else(|| "Windows PC".to_string()),
             os_name: System::long_os_version()
@@ -542,6 +658,8 @@ impl TelemetryEngine {
             process_count: processes.len(),
             listening_ports_count: self.last_listening_ports,
             active_profile: self.active_profile.clone(),
+            profile_managed_count,
+            profile_boosted_count,
         };
 
         TelemetrySnapshot {
@@ -664,6 +782,10 @@ fn classify_process(name: &str, exe_path: &str, cmd_line: &str) -> String {
     ) || p.contains("steamapps\\common")
         || p.contains("epic games")
         || p.contains("riot games")
+        || p.contains("xboxgames")
+        || p.contains("gog galaxy\\games")
+        || p.contains("ubisoft game launcher\\games")
+        || p.contains("ea games")
     {
         return "game".to_string();
     }

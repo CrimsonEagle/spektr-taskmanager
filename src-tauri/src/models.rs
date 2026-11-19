@@ -100,6 +100,8 @@ pub struct SystemSummary {
     pub process_count: usize,
     pub listening_ports_count: usize,
     pub active_profile: String,
+    pub profile_managed_count: usize,
+    pub profile_boosted_count: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

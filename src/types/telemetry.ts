@@ -80,6 +80,8 @@ export interface SystemSummary {
   processCount: number;
   listeningPortsCount: number;
   activeProfile: string;
+  profileManagedCount: number;
+  profileBoostedCount: number;
 }
 
 export type ProcessCategory =
