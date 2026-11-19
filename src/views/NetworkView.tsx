@@ -1,0 +1,365 @@
+import React, { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  ArrowDown,
+  ArrowUp,
+  RefreshCw,
+  Search,
+  Trash2,
+  Wifi,
+} from "lucide-react";
+import {
+  formatBytes,
+  formatSpeed,
+  getCategoryMeta,
+} from "../lib/format";
+import { api } from "../lib/tauri";
+import {
+  ActionResult,
+  NetworkConnectionEntry,
+  TelemetrySnapshot,
+} from "../types/telemetry";
+
+interface NetworkViewProps {
+  snapshot: TelemetrySnapshot;
+  onInspectPid: (pid: number) => void;
+  onActionFeedback: (res: ActionResult) => void;
+}
+
+const DEV_PORTS = new Set([
+  80, 443, 1420, 3000, 3001, 4200, 5000, 5173, 5174, 5432, 6379, 8000, 8080,
+  8443, 9000, 11434, 27017,
+]);
+
+export const NetworkView: React.FC<NetworkViewProps> = ({
+  snapshot,
+  onInspectPid,
+  onActionFeedback,
+}) => {
+  const [connections, setConnections] = useState<NetworkConnectionEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [filterMode, setFilterMode] = useState<"listening" | "all">("listening");
+  const [search, setSearch] = useState("");
+
+  const fetchConnections = useCallback(async () => {
+    try {
+      const list = await api.getNetworkConnections();
+      setConnections(list);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchConnections();
+    const id = setInterval(fetchConnections, 3000);
+    return () => clearInterval(id);
+  }, [fetchConnections]);
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase().replace(/^:/, "");
+    return connections.filter((c) => {
+      if (filterMode === "listening" && c.state !== "LISTENING") return false;
+      if (!q) return true;
+      return (
+        String(c.localPort).includes(q) ||
+        String(c.remotePort).includes(q) ||
+        c.processName.toLowerCase().includes(q) ||
+        c.processSubtitle.toLowerCase().includes(q) ||
+        c.localAddr.toLowerCase().includes(q) ||
+        c.remoteAddr.toLowerCase().includes(q) ||
+        String(c.pid).includes(q)
+      );
+    });
+  }, [connections, filterMode, search]);
+
+  const killPortOwner = async (e: React.MouseEvent, pid: number) => {
+    e.stopPropagation();
+    const res = await api.killProcess(pid);
+    onActionFeedback(res);
+    setTimeout(fetchConnections, 300);
+  };
+
+  return (
+    <div className="flex flex-col h-full gap-4">
+      {/* Network Interfaces Row */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 shrink-0">
+        {snapshot.network.interfaces.slice(0, 3).map((iface) => (
+          <div key={iface.name} className="fluent-card p-3.5 flex flex-col gap-2">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2 min-w-0">
+                <span
+                  className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0"
+                  style={{
+                    backgroundColor: "var(--accent-net-soft)",
+                    color: "var(--accent-net)",
+                  }}
+                >
+                  <Wifi className="w-3.5 h-3.5" />
+                </span>
+                <span className="text-xs font-semibold truncate">
+                  {iface.name}
+                </span>
+              </div>
+              <span
+                className="text-[10px] font-mono shrink-0"
+                style={{ color: "var(--text-muted)" }}
+              >
+                {iface.ipAddresses.find((ip) => ip.includes(".")) ??
+                  iface.ipAddresses[0] ??
+                  ""}
+              </span>
+            </div>
+
+            <div className="flex items-center justify-between text-xs tabular-nums">
+              <span
+                className="flex items-center gap-1 font-semibold"
+                style={{ color: "var(--accent-net)" }}
+              >
+                <ArrowDown className="w-3 h-3" />
+                {formatSpeed(iface.rxBytesPerSec)}
+              </span>
+              <span
+                className="flex items-center gap-1 font-semibold"
+                style={{ color: "var(--accent-disk)" }}
+              >
+                <ArrowUp className="w-3 h-3" />
+                {formatSpeed(iface.txBytesPerSec)}
+              </span>
+            </div>
+
+            <div
+              className="text-[10px] flex justify-between tabular-nums"
+              style={{ color: "var(--text-muted)" }}
+            >
+              <span>Empfangen: {formatBytes(iface.totalRxBytes)}</span>
+              <span>Gesendet: {formatBytes(iface.totalTxBytes)}</span>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Ports & Connections Toolbar */}
+      <div className="flex flex-wrap items-center justify-between gap-2.5 shrink-0">
+        <div
+          className="flex items-center gap-2 px-3 py-2 rounded-xl border flex-1 min-w-[220px] max-w-md"
+          style={{
+            backgroundColor: "var(--bg-surface)",
+            borderColor: "var(--border-subtle)",
+          }}
+        >
+          <Search className="w-4 h-4 shrink-0" style={{ color: "var(--text-muted)" }} />
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Port (:3000, :5173), Prozess oder IP suchen…"
+            className="bg-transparent outline-none text-xs flex-1"
+            style={{ color: "var(--text-primary)" }}
+          />
+        </div>
+
+        <div className="flex items-center gap-2">
+          <div
+            className="flex items-center p-1 rounded-xl border gap-0.5 text-xs"
+            style={{
+              backgroundColor: "var(--bg-surface)",
+              borderColor: "var(--border-subtle)",
+            }}
+          >
+            <button
+              onClick={() => setFilterMode("listening")}
+              className="px-3 py-1 rounded-lg font-medium cursor-pointer transition-colors"
+              style={{
+                backgroundColor:
+                  filterMode === "listening"
+                    ? "var(--accent-net-soft)"
+                    : "transparent",
+                color:
+                  filterMode === "listening"
+                    ? "var(--accent-net)"
+                    : "var(--text-muted)",
+              }}
+            >
+              Offene Ports (
+              {connections.filter((c) => c.state === "LISTENING").length})
+            </button>
+            <button
+              onClick={() => setFilterMode("all")}
+              className="px-3 py-1 rounded-lg font-medium cursor-pointer transition-colors"
+              style={{
+                backgroundColor:
+                  filterMode === "all" ? "var(--bg-surface-active)" : "transparent",
+                color:
+                  filterMode === "all"
+                    ? "var(--text-primary)"
+                    : "var(--text-muted)",
+              }}
+            >
+              Alle ({connections.length})
+            </button>
+          </div>
+
+          <button
+            onClick={fetchConnections}
+            className="p-2 rounded-xl border cursor-pointer hover:bg-[var(--bg-surface-hover)]"
+            style={{
+              backgroundColor: "var(--bg-surface)",
+              borderColor: "var(--border-subtle)",
+              color: "var(--text-secondary)",
+            }}
+            title="Aktualisieren"
+          >
+            <RefreshCw className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      </div>
+
+      {/* Ports Table */}
+      <div className="fluent-card flex-1 flex flex-col overflow-hidden">
+        <div
+          className="grid grid-cols-[90px_76px_minmax(180px,1fr)_165px_100px_70px] items-center gap-2 px-4 py-2.5 border-b text-[11px] font-semibold uppercase tracking-wider shrink-0"
+          style={{
+            borderColor: "var(--border-subtle)",
+            backgroundColor: "var(--bg-subtle)",
+            color: "var(--text-muted)",
+          }}
+        >
+          <span>Port</span>
+          <span>Protokoll</span>
+          <span>Prozess</span>
+          <span>Adresse</span>
+          <span>Status</span>
+          <span className="text-right">Aktion</span>
+        </div>
+
+        <div className="flex-1 overflow-y-auto">
+          {loading ? (
+            <div
+              className="p-8 text-center text-xs"
+              style={{ color: "var(--text-muted)" }}
+            >
+              Lade Netzwerk-Ports…
+            </div>
+          ) : filtered.length === 0 ? (
+            <div
+              className="p-8 text-center text-xs"
+              style={{ color: "var(--text-muted)" }}
+            >
+              Keine passenden Ports oder Verbindungen gefunden.
+            </div>
+          ) : (
+            filtered.slice(0, 250).map((c, idx) => {
+              const isDevPort = DEV_PORTS.has(c.localPort);
+              const cat = getCategoryMeta(c.category);
+              return (
+                <div
+                  key={`${c.protocol}-${c.localPort}-${c.remotePort}-${c.pid}-${idx}`}
+                  onClick={() => c.pid > 4 && onInspectPid(c.pid)}
+                  className="group grid grid-cols-[90px_76px_minmax(180px,1fr)_165px_100px_70px] items-center gap-2 px-4 py-2 border-b text-xs transition-colors hover:bg-[var(--bg-surface-hover)] cursor-pointer"
+                  style={{ borderColor: "var(--border-subtle)" }}
+                >
+                  <div className="font-mono font-bold tabular-nums flex items-center gap-1.5">
+                    <span
+                      className="px-2 py-0.5 rounded-md"
+                      style={{
+                        backgroundColor: isDevPort
+                          ? "var(--accent-ram-soft)"
+                          : "var(--bg-subtle)",
+                        color: isDevPort
+                          ? "var(--accent-ram)"
+                          : "var(--text-primary)",
+                      }}
+                    >
+                      :{c.localPort}
+                    </span>
+                  </div>
+
+                  <span
+                    className="text-[11px] font-medium"
+                    style={{ color: "var(--text-muted)" }}
+                  >
+                    {c.protocol}
+                  </span>
+
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span
+                      className="w-2 h-2 rounded-full shrink-0"
+                      style={{ backgroundColor: cat.color }}
+                    />
+                    <div className="min-w-0">
+                      <div className="font-semibold truncate">
+                        {c.processName}{" "}
+                        <span
+                          className="text-[10px] font-normal tabular-nums"
+                          style={{ color: "var(--text-muted)" }}
+                        >
+                          ({c.pid})
+                        </span>
+                      </div>
+                      {c.processSubtitle && (
+                        <div
+                          className="text-[10px] truncate"
+                          style={{ color: "var(--text-muted)" }}
+                        >
+                          {c.processSubtitle}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div
+                    className="font-mono text-[11px] truncate tabular-nums"
+                    style={{ color: "var(--text-secondary)" }}
+                    title={`${c.localAddr}:${c.localPort} -> ${c.remoteAddr}:${c.remotePort}`}
+                  >
+                    {c.state === "LISTENING"
+                      ? c.localAddr
+                      : `${c.remoteAddr}:${c.remotePort}`}
+                  </div>
+
+                  <div>
+                    <span
+                      className="text-[10px] font-semibold px-2 py-0.5 rounded-full"
+                      style={{
+                        backgroundColor:
+                          c.state === "LISTENING"
+                            ? "var(--accent-gpu-soft)"
+                            : c.state === "ESTABLISHED"
+                              ? "var(--accent-cpu-soft)"
+                              : "var(--bg-subtle)",
+                        color:
+                          c.state === "LISTENING"
+                            ? "var(--accent-gpu)"
+                            : c.state === "ESTABLISHED"
+                              ? "var(--accent-cpu)"
+                              : "var(--text-muted)",
+                      }}
+                    >
+                      {c.state}
+                    </span>
+                  </div>
+
+                  <div className="flex justify-end">
+                    {c.pid > 4 && (
+                      <button
+                        onClick={(e) => killPortOwner(e, c.pid)}
+                        className="opacity-0 group-hover:opacity-100 px-2 py-1 rounded-lg text-[11px] font-semibold flex items-center gap-1 cursor-pointer transition-opacity"
+                        style={{
+                          backgroundColor: "var(--accent-danger-soft)",
+                          color: "var(--accent-danger)",
+                        }}
+                        title={`Prozess ${c.processName} (PID ${c.pid}) beenden`}
+                      >
+                        <Trash2 className="w-3 h-3" />
+                        Kill
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};

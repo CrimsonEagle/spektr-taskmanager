@@ -1,0 +1,165 @@
+@import "tailwindcss";
+
+:root,
+[data-theme="light"] {
+  --bg-canvas: #f2f4f8;
+  --bg-surface: rgba(255, 255, 255, 0.86);
+  --bg-surface-solid: #ffffff;
+  --bg-surface-hover: rgba(15, 23, 42, 0.045);
+  --bg-surface-active: rgba(15, 23, 42, 0.075);
+  --bg-subtle: rgba(15, 23, 42, 0.035);
+  --bg-sidebar: rgba(247, 249, 252, 0.9);
+  --bg-titlebar: rgba(242, 244, 248, 0.92);
+  --bg-drawer: rgba(255, 255, 255, 0.96);
+
+  --border-subtle: rgba(15, 23, 42, 0.08);
+  --border-strong: rgba(15, 23, 42, 0.14);
+
+  --text-primary: #0f172a;
+  --text-secondary: #475569;
+  --text-muted: #64748b;
+
+  --shadow-card: 0 1px 2px rgba(15, 23, 42, 0.04), 0 4px 12px rgba(15, 23, 42, 0.03);
+  --shadow-float: 0 16px 40px rgba(15, 23, 42, 0.14), 0 2px 8px rgba(15, 23, 42, 0.06);
+
+  /* Semantic resource accents — crisp & vibrant on light */
+  --accent-cpu: #0284c7;
+  --accent-cpu-soft: rgba(2, 132, 199, 0.12);
+  --accent-ram: #7c3aed;
+  --accent-ram-soft: rgba(124, 58, 237, 0.12);
+  --accent-gpu: #059669;
+  --accent-gpu-soft: rgba(5, 150, 105, 0.12);
+  --accent-disk: #d97706;
+  --accent-disk-soft: rgba(217, 119, 6, 0.13);
+  --accent-net: #e11d48;
+  --accent-net-soft: rgba(225, 29, 72, 0.12);
+
+  --accent-danger: #dc2626;
+  --accent-danger-soft: rgba(220, 38, 38, 0.12);
+  --accent-warn: #ea580c;
+  --accent-ok: #16a34a;
+
+  color-scheme: light;
+}
+
+[data-theme="dark"] {
+  --bg-canvas: #13151a;
+  --bg-surface: rgba(28, 31, 39, 0.82);
+  --bg-surface-solid: #1c1f27;
+  --bg-surface-hover: rgba(255, 255, 255, 0.055);
+  --bg-surface-active: rgba(255, 255, 255, 0.09);
+  --bg-subtle: rgba(255, 255, 255, 0.04);
+  --bg-sidebar: rgba(20, 23, 29, 0.92);
+  --bg-titlebar: rgba(19, 21, 26, 0.94);
+  --bg-drawer: rgba(24, 27, 34, 0.97);
+
+  --border-subtle: rgba(255, 255, 255, 0.075);
+  --border-strong: rgba(255, 255, 255, 0.14);
+
+  --text-primary: #f1f5f9;
+  --text-secondary: #94a3b8;
+  --text-muted: #64748b;
+
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.25), 0 6px 18px rgba(0, 0, 0, 0.18);
+  --shadow-float: 0 20px 50px rgba(0, 0, 0, 0.52), 0 4px 12px rgba(0, 0, 0, 0.35);
+
+  /* Semantic resource accents — luminous on dark */
+  --accent-cpu: #38bdf8;
+  --accent-cpu-soft: rgba(56, 189, 248, 0.15);
+  --accent-ram: #a78bfa;
+  --accent-ram-soft: rgba(167, 139, 250, 0.16);
+  --accent-gpu: #34d399;
+  --accent-gpu-soft: rgba(52, 211, 153, 0.15);
+  --accent-disk: #fbbf24;
+  --accent-disk-soft: rgba(251, 191, 36, 0.15);
+  --accent-net: #fb7185;
+  --accent-net-soft: rgba(251, 113, 133, 0.15);
+
+  --accent-danger: #f87171;
+  --accent-danger-soft: rgba(248, 113, 113, 0.16);
+  --accent-warn: #fb923c;
+  --accent-ok: #4ade80;
+
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  font-family: "Segoe UI Variable", "Segoe UI", -apple-system, BlinkMacSystemFont, "Inter", sans-serif;
+  background-color: var(--bg-canvas);
+  color: var(--text-primary);
+  transition: background-color 220ms ease, color 220ms ease;
+}
+
+/* Subtle ambient system mica tint */
+.mica-canvas {
+  background-color: var(--bg-canvas);
+  background-image:
+    radial-gradient(ellipse 60% 45% at 15% 0%, var(--accent-cpu-soft), transparent 65%),
+    radial-gradient(ellipse 50% 40% at 88% 8%, var(--accent-ram-soft), transparent 60%);
+}
+
+.fluent-card {
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  box-shadow: var(--shadow-card);
+  backdrop-filter: blur(18px);
+  border-radius: 14px;
+  transition: border-color 180ms ease, background-color 180ms ease, box-shadow 180ms ease;
+}
+
+.fluent-card:hover {
+  border-color: var(--border-strong);
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Custom sleek scrollbars */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+/* Smooth pulse ring for live spikes */
+@keyframes pulse-soft {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.55;
+    transform: scale(1.18);
+  }
+}
+
+.animate-pulse-soft {
+  animation: pulse-soft 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
