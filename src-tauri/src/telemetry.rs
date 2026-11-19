@@ -6,6 +6,7 @@ use crate::models::{
 };
 use crate::network;
 use crate::process_ops;
+use crate::win_cpu::WinCpuSampler;
 use chrono::Utc;
 use std::collections::{HashMap, HashSet, VecDeque};
 use sysinfo::{Components, Disks, Networks, ProcessesToUpdate, System};
@@ -19,6 +20,7 @@ pub struct TelemetryEngine {
     networks: Networks,
     components: Components,
     gpu: GpuCollector,
+    win_cpu: WinCpuSampler,
     history: VecDeque<HistoryPoint>,
     proc_cpu_history: HashMap<u32, VecDeque<f32>>,
     suspended_pids: HashSet<u32>,
@@ -26,7 +28,6 @@ pub struct TelemetryEngine {
     active_profile: String,
     last_listening_ports: usize,
     tick_count: u64,
-    cached_handles: HashMap<u32, u32>,
 }
 
 impl TelemetryEngine {
@@ -37,6 +38,7 @@ impl TelemetryEngine {
         let networks = Networks::new_with_refreshed_list();
         let components = Components::new_with_refreshed_list();
         let gpu = GpuCollector::new();
+        let win_cpu = WinCpuSampler::new();
 
         Self {
             sys,
@@ -44,6 +46,7 @@ impl TelemetryEngine {
             networks,
             components,
             gpu,
+            win_cpu,
             history: VecDeque::with_capacity(MAX_HISTORY_POINTS + 1),
             proc_cpu_history: HashMap::new(),
             suspended_pids: HashSet::new(),
@@ -51,7 +54,6 @@ impl TelemetryEngine {
             active_profile: "normal".to_string(),
             last_listening_ports: 0,
             tick_count: 0,
-            cached_handles: HashMap::new(),
         }
     }
 
@@ -118,6 +120,7 @@ impl TelemetryEngine {
         self.sys.refresh_memory();
         self.sys
             .refresh_processes(ProcessesToUpdate::All, true);
+        let win_snap = self.win_cpu.sample();
         self.networks.refresh(true);
 
         if self.tick_count % 5 == 1 {
@@ -130,7 +133,10 @@ impl TelemetryEngine {
         let cpus = self.sys.cpus();
         let logical_cores = cpus.len().max(1);
         let physical_cores = self.sys.physical_core_count().unwrap_or(logical_cores);
-        let total_cpu = self.sys.global_cpu_usage().clamp(0.0, 100.0);
+        let total_cpu = win_snap
+            .total_cpu_percent
+            .unwrap_or_else(|| self.sys.global_cpu_usage())
+            .clamp(0.0, 100.0);
         let per_core: Vec<f32> = cpus
             .iter()
             .map(|c| c.cpu_usage().clamp(0.0, 100.0))
@@ -187,8 +193,6 @@ impl TelemetryEngine {
         let mut active_pids = HashSet::new();
         let mut processes = Vec::with_capacity(self.sys.processes().len());
 
-        let refresh_handles = self.tick_count % 3 == 1;
-
         for (pid, proc_) in self.sys.processes() {
             let pid_u32 = pid.as_u32();
             active_pids.insert(pid_u32);
@@ -203,7 +207,10 @@ impl TelemetryEngine {
             let subtitle = extract_subtitle(&name, &cmd_line, &exe_path);
             let group_key = compute_group_key(&name);
 
-            let cpu_percent = (proc_.cpu_usage() / logical_cores as f32).clamp(0.0, 100.0);
+            let win_info = win_snap.per_pid.get(&pid_u32);
+            let cpu_percent = win_info
+                .map(|w| w.cpu_percent)
+                .unwrap_or_else(|| (proc_.cpu_usage() / logical_cores as f32).clamp(0.0, 100.0));
             let mem_bytes = proc_.memory();
             let disk = proc_.disk_usage();
             total_disk_read = total_disk_read.saturating_add(disk.read_bytes);
@@ -219,11 +226,10 @@ impl TelemetryEngine {
             }
             hist.push_back((cpu_percent * 10.0).round() / 10.0);
 
-            if refresh_handles {
-                if let Some(h) = process_ops::get_process_handle_count(pid_u32) {
-                    self.cached_handles.insert(pid_u32, h);
-                }
-            }
+            let handle_count = win_info
+                .map(|w| w.handle_count)
+                .or_else(|| process_ops::get_process_handle_count(pid_u32));
+            let thread_count = win_info.map(|w| w.thread_count);
 
             let is_suspended = self.suspended_pids.contains(&pid_u32);
             let is_efficiency_mode = self.efficiency_pids.contains(&pid_u32);
@@ -252,7 +258,8 @@ impl TelemetryEngine {
                 run_time_seconds: proc_.run_time(),
                 exe_path,
                 cmd_line,
-                handle_count: self.cached_handles.get(&pid_u32).copied(),
+                handle_count,
+                thread_count,
                 cpu_history: hist.iter().copied().collect(),
             });
         }
@@ -261,9 +268,6 @@ impl TelemetryEngine {
         self.proc_cpu_history.retain(|k, _| active_pids.contains(k));
         self.suspended_pids.retain(|k| active_pids.contains(k));
         self.efficiency_pids.retain(|k| active_pids.contains(k));
-        if refresh_handles {
-            self.cached_handles.retain(|k, _| active_pids.contains(k));
-        }
 
         // Disks
         let mut drives = Vec::new();
@@ -363,7 +367,10 @@ impl TelemetryEngine {
                 .count();
         }
 
-        // Top 5 CPU & RAM blame snapshots for Spike-Blame history
+        // Top 8 CPU & RAM blame snapshots for Spike-Blame & Range Analytics
+        let accounted_cpu: f32 = processes.iter().map(|p| p.cpu_percent).sum();
+        let unaccounted_cpu = ((total_cpu - accounted_cpu).max(0.0) * 10.0).round() / 10.0;
+
         let mut by_cpu = processes.clone();
         by_cpu.sort_by(|a, b| {
             b.cpu_percent
@@ -372,7 +379,7 @@ impl TelemetryEngine {
         });
         let top_cpu: Vec<BlameProcess> = by_cpu
             .iter()
-            .take(5)
+            .take(8)
             .map(|p| BlameProcess {
                 pid: p.pid,
                 name: p.name.clone(),
@@ -387,7 +394,7 @@ impl TelemetryEngine {
         by_ram.sort_by(|a, b| b.memory_bytes.cmp(&a.memory_bytes));
         let top_ram: Vec<BlameProcess> = by_ram
             .iter()
-            .take(5)
+            .take(8)
             .map(|p| BlameProcess {
                 pid: p.pid,
                 name: p.name.clone(),
@@ -422,10 +429,19 @@ impl TelemetryEngine {
         if self.history.len() >= 5 && (total_cpu > 75.0 || (total_cpu - avg_recent_cpu) > 25.0) {
             is_spike = true;
             if let Some(culprit) = top_cpu.first() {
-                spike_reason = Some(format!(
-                    "CPU-Spike ({:.0}%) durch {}",
-                    total_cpu, culprit.name
-                ));
+                if culprit.cpu_percent >= 8.0 && culprit.cpu_percent >= unaccounted_cpu * 0.5 {
+                    spike_reason = Some(format!(
+                        "CPU-Spike ({:.0}%) durch {} ({:.0}%)",
+                        total_cpu, culprit.name, culprit.cpu_percent
+                    ));
+                } else if unaccounted_cpu >= 15.0 {
+                    spike_reason = Some(format!(
+                        "CPU-Spike ({:.0}%) — kurzlebige Prozesse / Kernel",
+                        total_cpu
+                    ));
+                } else {
+                    spike_reason = Some(format!("CPU-Spike ({:.0}%)", total_cpu));
+                }
             }
         } else if ram_percent > 88.0 {
             is_spike = true;
@@ -450,6 +466,7 @@ impl TelemetryEngine {
             net_kb_per_sec: (net_kb * 10.0).round() / 10.0,
             is_spike,
             spike_reason,
+            unaccounted_cpu_percent: unaccounted_cpu,
             top_cpu,
             top_ram,
         };

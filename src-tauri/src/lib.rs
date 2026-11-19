@@ -5,6 +5,7 @@ mod network;
 mod process_ops;
 mod startup_services;
 mod telemetry;
+mod win_cpu;
 
 use models::{
     ActionResult, FileLockEntry, HistoryPoint, NetworkConnectionEntry, ServiceEntry, StartupEntry,

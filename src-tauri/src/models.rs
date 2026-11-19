@@ -124,6 +124,7 @@ pub struct ProcessEntry {
     pub exe_path: String,
     pub cmd_line: String,
     pub handle_count: Option<u32>,
+    pub thread_count: Option<u32>,
     pub cpu_history: Vec<f32>,
 }
 
@@ -149,6 +150,7 @@ pub struct HistoryPoint {
     pub net_kb_per_sec: f32,
     pub is_spike: bool,
     pub spike_reason: Option<String>,
+    pub unaccounted_cpu_percent: f32,
     pub top_cpu: Vec<BlameProcess>,
     pub top_ram: Vec<BlameProcess>,
 }

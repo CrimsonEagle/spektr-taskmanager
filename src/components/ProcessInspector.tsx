@@ -388,9 +388,9 @@ export const ProcessInspector: React.FC<ProcessInspectorProps> = ({
                 </span>
               </div>
               <div className="flex justify-between">
-                <span style={{ color: "var(--text-muted)" }}>Offene Handles</span>
+                <span style={{ color: "var(--text-muted)" }}>Threads / Offene Handles</span>
                 <span className="font-medium tabular-nums">
-                  {process.handleCount ?? "–"}
+                  {process.threadCount ?? "–"} / {process.handleCount ?? "–"}
                 </span>
               </div>
               {parentProc && (

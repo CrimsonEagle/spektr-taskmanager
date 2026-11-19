@@ -1,0 +1,266 @@
+use std::collections::HashMap;
+
+#[derive(Debug, Clone, Default)]
+pub struct WinProcCpuInfo {
+    pub cpu_percent: f32,
+    pub handle_count: u32,
+    pub thread_count: u32,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct WinCpuSnapshot {
+    pub total_cpu_percent: Option<f32>,
+    pub per_pid: HashMap<u32, WinProcCpuInfo>,
+}
+
+pub struct WinCpuSampler {
+    prev_sys_idle: u64,
+    prev_sys_kernel: u64,
+    prev_sys_user: u64,
+    prev_wall_filetime: u64,
+    // pid -> (create_time, total_cpu_100ns)
+    prev_procs: HashMap<u32, (i64, u64)>,
+    initialized: bool,
+}
+
+impl WinCpuSampler {
+    pub fn new() -> Self {
+        let mut s = Self {
+            prev_sys_idle: 0,
+            prev_sys_kernel: 0,
+            prev_sys_user: 0,
+            prev_wall_filetime: 0,
+            prev_procs: HashMap::new(),
+            initialized: false,
+        };
+        let _ = s.sample();
+        s
+    }
+
+    #[cfg(windows)]
+    pub fn sample(&mut self) -> WinCpuSnapshot {
+        use windows::Win32::Foundation::FILETIME;
+        use windows::Win32::System::SystemInformation::GetSystemTimeAsFileTime;
+        use windows::Win32::System::Threading::GetSystemTimes;
+
+        let mut f_idle = FILETIME::default();
+        let mut f_kernel = FILETIME::default();
+        let mut f_user = FILETIME::default();
+
+        let sys_ok = unsafe {
+            GetSystemTimes(
+                Some(&mut f_idle),
+                Some(&mut f_kernel),
+                Some(&mut f_user),
+            )
+            .is_ok()
+        };
+
+        let now_ft = unsafe {
+            let ft = GetSystemTimeAsFileTime();
+            filetime_to_u64(ft)
+        };
+
+        let raw_procs = query_all_process_times();
+
+        if !sys_ok || raw_procs.is_empty() {
+            return WinCpuSnapshot::default();
+        }
+
+        let sys_idle = filetime_to_u64(f_idle);
+        let sys_kernel = filetime_to_u64(f_kernel);
+        let sys_user = filetime_to_u64(f_user);
+
+        if !self.initialized {
+            self.prev_sys_idle = sys_idle;
+            self.prev_sys_kernel = sys_kernel;
+            self.prev_sys_user = sys_user;
+            self.prev_wall_filetime = now_ft;
+            self.prev_procs = raw_procs
+                .iter()
+                .map(|p| (p.pid, (p.create_time, p.total_time)))
+                .collect();
+            self.initialized = true;
+            return WinCpuSnapshot::default();
+        }
+
+        let delta_idle = sys_idle.saturating_sub(self.prev_sys_idle);
+        let delta_kernel = sys_kernel.saturating_sub(self.prev_sys_kernel);
+        let delta_user = sys_user.saturating_sub(self.prev_sys_user);
+        // On Windows, GetSystemTimes kernel time INCLUDES idle time.
+        let delta_total_sys = delta_kernel.saturating_add(delta_user);
+
+        let prev_wall = self.prev_wall_filetime;
+
+        let mut per_pid = HashMap::with_capacity(raw_procs.len());
+        let mut next_prev = HashMap::with_capacity(raw_procs.len());
+
+        let total_cpu_percent = if delta_total_sys > 0 {
+            let busy = delta_total_sys.saturating_sub(delta_idle);
+            Some(((busy as f64 / delta_total_sys as f64) * 100.0).clamp(0.0, 100.0) as f32)
+        } else {
+            None
+        };
+
+        for p in raw_procs {
+            let cpu_pct = if p.pid == 0 || delta_total_sys == 0 {
+                0.0
+            } else if let Some(&(old_create, old_total)) = self.prev_procs.get(&p.pid) {
+                if old_create == p.create_time {
+                    let delta_proc = p.total_time.saturating_sub(old_total);
+                    ((delta_proc as f64 / delta_total_sys as f64) * 100.0).clamp(0.0, 100.0) as f32
+                } else {
+                    // PID was reused by a brand-new process during this tick
+                    ((p.total_time as f64 / delta_total_sys as f64) * 100.0).clamp(0.0, 100.0) as f32
+                }
+            } else if p.create_time > 0 && (p.create_time as u64) >= prev_wall.saturating_sub(5_000_000) {
+                // Brand-new process spawned during this tick: attribute its entire accumulated CPU time!
+                ((p.total_time as f64 / delta_total_sys as f64) * 100.0).clamp(0.0, 100.0) as f32
+            } else {
+                0.0
+            };
+
+            next_prev.insert(p.pid, (p.create_time, p.total_time));
+            per_pid.insert(
+                p.pid,
+                WinProcCpuInfo {
+                    cpu_percent: (cpu_pct * 10.0).round() / 10.0,
+                    handle_count: p.handle_count,
+                    thread_count: p.thread_count,
+                },
+            );
+        }
+
+        self.prev_sys_idle = sys_idle;
+        self.prev_sys_kernel = sys_kernel;
+        self.prev_sys_user = sys_user;
+        self.prev_wall_filetime = now_ft;
+        self.prev_procs = next_prev;
+
+        WinCpuSnapshot {
+            total_cpu_percent,
+            per_pid,
+        }
+    }
+
+    #[cfg(not(windows))]
+    pub fn sample(&mut self) -> WinCpuSnapshot {
+        WinCpuSnapshot::default()
+    }
+}
+
+#[cfg(windows)]
+#[inline]
+fn filetime_to_u64(ft: windows::Win32::Foundation::FILETIME) -> u64 {
+    ((ft.dwHighDateTime as u64) << 32) | (ft.dwLowDateTime as u64)
+}
+
+#[cfg(windows)]
+struct RawProcTime {
+    pid: u32,
+    create_time: i64,
+    total_time: u64,
+    handle_count: u32,
+    thread_count: u32,
+}
+
+#[cfg(windows)]
+#[repr(C)]
+struct NtSystemProcessInformation {
+    next_entry_offset: u32,
+    number_of_threads: u32,
+    working_set_private_size: i64,
+    hard_fault_count: u32,
+    number_of_threads_high_watermark: u32,
+    cycle_time: u64,
+    create_time: i64,
+    user_time: i64,
+    kernel_time: i64,
+    image_name_len: u16,
+    image_name_max_len: u16,
+    image_name_buf: *mut u16,
+    base_priority: i32,
+    unique_process_id: usize,
+    inherited_from_unique_process_id: usize,
+    handle_count: u32,
+}
+
+#[cfg(windows)]
+fn query_all_process_times() -> Vec<RawProcTime> {
+    use std::ffi::c_void;
+    use windows::core::{s, w};
+    use windows::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress};
+
+    type NtQuerySystemInformationFn = unsafe extern "system" fn(
+        system_information_class: u32,
+        system_information: *mut c_void,
+        system_information_length: u32,
+        return_length: *mut u32,
+    ) -> i32;
+
+    const SYSTEM_PROCESS_INFORMATION_CLASS: u32 = 5;
+    const STATUS_INFO_LENGTH_MISMATCH: i32 = 0xC0000004u32 as i32;
+
+    unsafe {
+        let Ok(ntdll) = GetModuleHandleW(w!("ntdll.dll")) else {
+            return Vec::new();
+        };
+        let Some(proc_ptr) = GetProcAddress(ntdll, s!("NtQuerySystemInformation")) else {
+            return Vec::new();
+        };
+        let nt_query: NtQuerySystemInformationFn = std::mem::transmute(proc_ptr);
+
+        let mut buf_size: usize = 512 * 1024;
+        let mut buffer: Vec<u8> = vec![0u8; buf_size];
+
+        loop {
+            let mut ret_len: u32 = 0;
+            let status = nt_query(
+                SYSTEM_PROCESS_INFORMATION_CLASS,
+                buffer.as_mut_ptr() as *mut c_void,
+                buffer.len() as u32,
+                &mut ret_len,
+            );
+
+            if status == STATUS_INFO_LENGTH_MISMATCH {
+                buf_size = (ret_len as usize).max(buf_size * 2) + 65536;
+                if buf_size > 64 * 1024 * 1024 {
+                    return Vec::new();
+                }
+                buffer.resize(buf_size, 0);
+                continue;
+            }
+
+            if status < 0 {
+                return Vec::new();
+            }
+            break;
+        }
+
+        let mut results = Vec::with_capacity(512);
+        let mut offset: usize = 0;
+        let min_size = std::mem::size_of::<NtSystemProcessInformation>();
+
+        while offset + min_size <= buffer.len() {
+            let entry = &*(buffer.as_ptr().add(offset) as *const NtSystemProcessInformation);
+            let pid = entry.unique_process_id as u32;
+            let user_t = entry.user_time.max(0) as u64;
+            let kernel_t = entry.kernel_time.max(0) as u64;
+
+            results.push(RawProcTime {
+                pid,
+                create_time: entry.create_time,
+                total_time: user_t.saturating_add(kernel_t),
+                handle_count: entry.handle_count,
+                thread_count: entry.number_of_threads,
+            });
+
+            if entry.next_entry_offset == 0 {
+                break;
+            }
+            offset = offset.saturating_add(entry.next_entry_offset as usize);
+        }
+
+        results
+    }
+}

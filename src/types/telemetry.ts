@@ -110,6 +110,7 @@ export interface ProcessEntry {
   exePath: string;
   cmdLine: string;
   handleCount: number | null;
+  threadCount: number | null;
   cpuHistory: number[];
 }
 
@@ -131,8 +132,14 @@ export interface HistoryPoint {
   netKbPerSec: number;
   isSpike: boolean;
   spikeReason: string | null;
+  unaccountedCpuPercent: number;
   topCpu: BlameProcess[];
   topRam: BlameProcess[];
+}
+
+export interface TimeRange {
+  startMs: number;
+  endMs: number;
 }
 
 export interface TelemetrySnapshot {
