@@ -3,6 +3,8 @@ import {
   AlertTriangle,
   Cpu,
   Download,
+  Fan,
+  Gauge,
   Gpu,
   HardDrive,
   History,
@@ -14,6 +16,7 @@ import {
   Zap,
 } from "lucide-react";
 import { InteractiveAreaChart } from "../components/charts/InteractiveAreaChart";
+import { Sparkline } from "../components/charts/Sparkline";
 import {
   formatBytes,
   formatSpeed,
@@ -66,6 +69,7 @@ const METRIC_SELECTORS: Record<MetricKey, (p: HistoryPoint) => number> = {
   disk: (p) => p.diskMbPerSec,
   net: (p) => p.netKbPerSec,
 };
+const DISK_ACTIVE_SELECTOR = (p: HistoryPoint) => p.diskActivePercent ?? 0;
 
 const METRIC_STATIC_META: Record<
   MetricKey,
@@ -84,8 +88,8 @@ const METRIC_STATIC_META: Record<
     color: "var(--accent-cpu)",
     unit: "%",
     max: 100,
-    listTitleSingle: "Top CPU-Prozesse zu diesem Zeitpunkt",
-    listTitleRange: "Top CPU-Prozesse im Zeitraum",
+    listTitleSingle: "Top CPU-Prozesse",
+    listTitleRange: "Top CPU-Prozesse (Zeitraum)",
     emptyText: "Keine messbare CPU-Aktivität in diesem Zeitraum.",
   },
   ram: {
@@ -93,8 +97,8 @@ const METRIC_STATIC_META: Record<
     color: "var(--accent-ram)",
     unit: "%",
     max: 100,
-    listTitleSingle: "Top RAM-Prozesse zu diesem Zeitpunkt",
-    listTitleRange: "Top RAM-Prozesse im Zeitraum",
+    listTitleSingle: "Top RAM-Prozesse",
+    listTitleRange: "Top RAM-Prozesse (Zeitraum)",
     emptyText: "Keine RAM-Prozessdaten verfügbar.",
   },
   gpu: {
@@ -102,8 +106,8 @@ const METRIC_STATIC_META: Record<
     color: "var(--accent-gpu)",
     unit: "%",
     max: 100,
-    listTitleSingle: "Top GPU-Prozesse zu diesem Zeitpunkt",
-    listTitleRange: "Top GPU-Prozesse im Zeitraum",
+    listTitleSingle: "Top GPU-Prozesse",
+    listTitleRange: "Top GPU-Prozesse (Zeitraum)",
     emptyText: "Keine aktive GPU-Engine-Auslastung gemessen.",
   },
   disk: {
@@ -111,8 +115,8 @@ const METRIC_STATIC_META: Record<
     color: "var(--accent-disk)",
     unit: "MB/s",
     max: undefined,
-    listTitleSingle: "Top Datenträger-Prozesse zu diesem Zeitpunkt",
-    listTitleRange: "Top Datenträger-Prozesse im Zeitraum",
+    listTitleSingle: "Top Disk-Prozesse",
+    listTitleRange: "Top Disk-Prozesse (Zeitraum)",
     emptyText: "Keine aktive Datenträger-Aktivität in diesem Zeitraum.",
   },
   net: {
@@ -120,8 +124,8 @@ const METRIC_STATIC_META: Record<
     color: "var(--accent-net)",
     unit: "KB/s",
     max: undefined,
-    listTitleSingle: "Aktivste Netzwerk-Prozesse (Verbindungen)",
-    listTitleRange: "Aktivste Netzwerk-Prozesse im Zeitraum",
+    listTitleSingle: "Top Netzwerk-Prozesse",
+    listTitleRange: "Top Netzwerk (Zeitraum)",
     emptyText: "Keine aktiven Netzwerk-Verbindungen gefunden.",
   },
 };
@@ -167,6 +171,9 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
   };
 
   const [windowSec, setWindowSec] = useState<TimeWindow>(300);
+  const [diskChartMode, setDiskChartMode] = useState<"active" | "throughput">(
+    "active"
+  );
   const [selectedRange, setSelectedRange] = useState<TimeRange | null>(null);
   const [hoverPoint, setHoverPoint] = useState<HistoryPoint | null>(null);
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
@@ -212,7 +219,10 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
   }, [initialSpikeTimestamp, slicedHistory, onClearInitialSpike]);
 
   const staticMeta = METRIC_STATIC_META[metric];
-  const valueSelector = METRIC_SELECTORS[metric];
+  const isDiskActiveChart = metric === "disk" && diskChartMode === "active";
+  const valueSelector = isDiskActiveChart
+    ? DISK_ACTIVE_SELECTOR
+    : METRIC_SELECTORS[metric];
 
   const currentMetricText =
     metric === "cpu"
@@ -224,9 +234,11 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
             ? `${snapshot.gpu.usagePercent.toFixed(0)}%`
             : "–"
           : metric === "disk"
-            ? formatSpeed(
-                snapshot.disk.readBytesPerSec + snapshot.disk.writeBytesPerSec
-              )
+            ? isDiskActiveChart
+              ? `${(snapshot.disk.activePercent ?? 0).toFixed(0)}%`
+              : formatSpeed(
+                  snapshot.disk.readBytesPerSec + snapshot.disk.writeBytesPerSec
+                )
             : formatSpeed(
                 snapshot.network.rxBytesPerSec + snapshot.network.txBytesPerSec
               );
@@ -246,10 +258,23 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
 
   const metricConfig = {
     ...staticMeta,
+    unit: isDiskActiveChart ? "%" : staticMeta.unit,
+    max: isDiskActiveChart ? 100 : staticMeta.max,
     selector: valueSelector,
     current: currentMetricText,
     icon: metricIcon,
   };
+
+  // 60-sample mini-history for GPU engine Sparklines
+  const gpuEngineSeries = useMemo(() => {
+    const recent = history.slice(-60);
+    return {
+      e3d: recent.map((h) => h.gpuEngine3d ?? 0),
+      copy: recent.map((h) => h.gpuEngineCopy ?? 0),
+      encode: recent.map((h) => h.gpuEngineEncode ?? 0),
+      decode: recent.map((h) => h.gpuEngineDecode ?? 0),
+    };
+  }, [history]);
 
   const activePoints = useMemo<HistoryPoint[]>(() => {
     if (selectedRange) {
@@ -678,11 +703,9 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
     {
       id: "disk" as const,
       label: "Disk",
-      val: formatSpeed(
-        snapshot.disk.readBytesPerSec + snapshot.disk.writeBytesPerSec
-      ),
+      val: `${(snapshot.disk.activePercent ?? 0).toFixed(0)}%`,
       color: "var(--accent-disk)",
-      widthClass: "w-[144px]",
+      widthClass: "w-[106px]",
     },
     {
       id: "net" as const,
@@ -824,20 +847,20 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
         </div>
       </div>
 
-      {/* Main Chart + Range/Spike Analytics Panel */}
-      <div className="grid grid-cols-1 xl:grid-cols-[1fr_365px] gap-4">
-        <div className="fluent-card p-4 flex flex-col gap-3">
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2.5">
-              <span style={{ color: metricConfig.color }}>
+      {/* Main Chart + Range/Spike Analytics Panel — Fixed-height cards to prevent ANY layout shift */}
+      <div className="grid grid-cols-1 xl:grid-cols-[1fr_365px] gap-4 items-stretch">
+        <div className="fluent-card p-4 flex flex-col gap-3 h-[524px] overflow-hidden min-w-0">
+          <div className="h-[42px] shrink-0 flex items-center justify-between gap-2 min-w-0">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <span className="shrink-0" style={{ color: metricConfig.color }}>
                 {metricConfig.icon}
               </span>
-              <div>
-                <h3 className="text-sm font-semibold">
+              <div className="min-w-0">
+                <h3 className="text-sm font-semibold truncate">
                   {metricConfig.label}-Verlauf & Bereichs-Analyse
                 </h3>
                 <p
-                  className="text-[11px]"
+                  className="text-[11px] truncate"
                   style={{ color: "var(--text-muted)" }}
                 >
                   Ziehe mit gedrückter Maustaste einen Bereich auf (oder klicke
@@ -845,36 +868,91 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
                 </p>
               </div>
             </div>
-            <div
-              className="text-2xl font-bold tabular-nums shrink-0"
-              style={{ color: metricConfig.color }}
-            >
-              {metricConfig.current}
+            <div className="flex items-center gap-2 shrink-0">
+              {metric === "disk" && (
+                <div
+                  className="flex items-center p-0.5 rounded-lg border text-[11px]"
+                  style={{
+                    backgroundColor: "var(--bg-subtle)",
+                    borderColor: "var(--border-subtle)",
+                  }}
+                >
+                  <button
+                    onClick={() => setDiskChartMode("active")}
+                    className="px-2 py-0.5 rounded-md font-medium cursor-pointer transition-colors"
+                    style={{
+                      backgroundColor:
+                        diskChartMode === "active"
+                          ? "var(--bg-surface-active)"
+                          : "transparent",
+                      color:
+                        diskChartMode === "active"
+                          ? "var(--accent-disk)"
+                          : "var(--text-muted)",
+                    }}
+                  >
+                    Aktive Zeit %
+                  </button>
+                  <button
+                    onClick={() => setDiskChartMode("throughput")}
+                    className="px-2 py-0.5 rounded-md font-medium cursor-pointer transition-colors"
+                    style={{
+                      backgroundColor:
+                        diskChartMode === "throughput"
+                          ? "var(--bg-surface-active)"
+                          : "transparent",
+                      color:
+                        diskChartMode === "throughput"
+                          ? "var(--accent-disk)"
+                          : "var(--text-muted)",
+                    }}
+                  >
+                    Durchsatz
+                  </button>
+                </div>
+              )}
+              <div
+                className="text-2xl font-bold tabular-nums shrink-0 min-w-[88px] text-right whitespace-nowrap"
+                style={{ color: metricConfig.color }}
+              >
+                {metricConfig.current}
+              </div>
             </div>
           </div>
 
-          <InteractiveAreaChart
-            data={slicedHistory}
-            valueSelector={metricConfig.selector}
-            color={metricConfig.color}
-            unit={metricConfig.unit}
-            maxValue={metricConfig.max}
-            selectedRange={selectedRange}
-            onSelectRange={setSelectedRange}
-            onHoverPoint={setHoverPoint}
-          />
+          <div className="h-[282px] shrink-0 w-full">
+            <InteractiveAreaChart
+              data={slicedHistory}
+              valueSelector={metricConfig.selector}
+              color={metricConfig.color}
+              unit={metricConfig.unit}
+              maxValue={metricConfig.max}
+              height={282}
+              selectedRange={selectedRange}
+              onSelectRange={setSelectedRange}
+              onHoverPoint={setHoverPoint}
+            />
+          </div>
 
-          {/* Active Selection Info Strip */}
-          {isPinned && (
-            <div
-              className="flex items-center justify-between gap-2 px-3 py-1.5 rounded-xl border text-xs"
-              style={{
-                backgroundColor: `${metricConfig.color}14`,
-                borderColor: `${metricConfig.color}44`,
-              }}
-            >
-              <span className="tabular-nums font-medium">
-                {isRangeMode ? (
+          {/* Selection / Status Strip — ALWAYS rendered with fixed height so hover/selection NEVER shifts layout */}
+          <div
+            className="h-[36px] shrink-0 flex items-center justify-between gap-2 px-3 rounded-xl border text-xs overflow-hidden"
+            style={
+              isPinned
+                ? {
+                    backgroundColor: `${metricConfig.color}14`,
+                    borderColor: `${metricConfig.color}44`,
+                  }
+                : {
+                    backgroundColor: "var(--bg-subtle)",
+                    borderColor: "var(--border-subtle)",
+                    color: "var(--text-muted)",
+                  }
+            }
+          >
+            <span className="tabular-nums font-medium truncate">
+              {isPinned ? (
+                isRangeMode ? (
                   <>
                     Ausgewählter Bereich:{" "}
                     <strong>
@@ -888,67 +966,98 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
                     Fixierter Zeitpunkt:{" "}
                     <strong>{formatTimeShort(analytics.startMs)}</strong>
                   </>
-                )}
-              </span>
+                )
+              ) : hoverPoint ? (
+                <>
+                  Vorschau um{" "}
+                  <strong style={{ color: "var(--text-primary)" }}>
+                    {formatTimeShort(hoverPoint.timestampMs)}
+                  </strong>{" "}
+                  — {metricConfig.selector(hoverPoint).toFixed(1)}{" "}
+                  {metricConfig.unit}
+                </>
+              ) : (
+                "Live-Ansicht — Bereich im Diagramm aufziehen oder Punkt anklicken"
+              )}
+            </span>
+            {isPinned ? (
               <button
                 onClick={() => setSelectedRange(null)}
-                className="flex items-center gap-1 text-[11px] font-semibold cursor-pointer hover:underline"
+                className="flex items-center gap-1 text-[11px] font-semibold cursor-pointer hover:underline shrink-0 whitespace-nowrap"
                 style={{ color: metricConfig.color }}
               >
                 <X className="w-3.5 h-3.5" />
                 Auswahl aufheben
               </button>
-            </div>
-          )}
-
-          {/* Detected Spikes Strip */}
-          {detectedSpikes.length > 0 && (
-            <div
-              className="flex items-center gap-2 flex-wrap pt-1.5 border-t"
-              style={{ borderColor: "var(--border-subtle)" }}
-            >
-              <span
-                className="text-[11px] font-semibold flex items-center gap-1"
-                style={{ color: "var(--accent-danger)" }}
-              >
-                <AlertTriangle className="w-3.5 h-3.5" /> Erkannte Spikes:
+            ) : (
+              <span className="text-[11px] tabular-nums shrink-0 whitespace-nowrap opacity-75">
+                {slicedHistory.length} Samples
               </span>
-              {detectedSpikes.map((point) => {
-                const isIncluded =
-                  selectedRange != null &&
-                  point.timestampMs >= selectedRange.startMs &&
-                  point.timestampMs <= selectedRange.endMs;
-                return (
-                  <button
-                    key={point.timestampMs}
-                    onClick={() => selectSpikeWindow(point.timestampMs)}
-                    className="px-2 py-0.5 rounded-md text-[11px] font-medium cursor-pointer transition-colors"
-                    style={{
-                      backgroundColor: isIncluded
-                        ? "var(--accent-danger)"
-                        : "var(--accent-danger-soft)",
-                      color: isIncluded ? "#ffffff" : "var(--accent-danger)",
-                    }}
-                  >
-                    {formatTimeShort(point.timestampMs)}
-                    {point.spikeReason ? ` • ${point.spikeReason}` : ""}
-                  </button>
-                );
-              })}
-            </div>
-          )}
+            )}
+          </div>
+
+          {/* Detected Spikes Strip — ALWAYS rendered with fixed height & internal scroll */}
+          <div
+            className="h-[82px] shrink-0 overflow-y-auto stable-scroll pt-2 border-t"
+            style={{ borderColor: "var(--border-subtle)" }}
+          >
+            {detectedSpikes.length > 0 ? (
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <span
+                  className="text-[11px] font-semibold flex items-center gap-1 shrink-0 mr-0.5"
+                  style={{ color: "var(--accent-danger)" }}
+                >
+                  <AlertTriangle className="w-3.5 h-3.5" /> Erkannte Spikes:
+                </span>
+                {detectedSpikes.map((point) => {
+                  const isIncluded =
+                    selectedRange != null &&
+                    point.timestampMs >= selectedRange.startMs &&
+                    point.timestampMs <= selectedRange.endMs;
+                  return (
+                    <button
+                      key={point.timestampMs}
+                      onClick={() => selectSpikeWindow(point.timestampMs)}
+                      className="px-2 py-0.5 rounded-md text-[11px] font-medium cursor-pointer transition-colors whitespace-nowrap"
+                      style={{
+                        backgroundColor: isIncluded
+                          ? "var(--accent-danger)"
+                          : "var(--accent-danger-soft)",
+                        color: isIncluded ? "#ffffff" : "var(--accent-danger)",
+                      }}
+                    >
+                      {formatTimeShort(point.timestampMs)}
+                      {point.spikeReason ? ` • ${point.spikeReason}` : ""}
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
+              <div
+                className="h-full flex items-center text-[11px]"
+                style={{ color: "var(--text-muted)" }}
+              >
+                Keine Lastspitzen im aktuellen Zeitfenster erkannt.
+              </div>
+            )}
+          </div>
         </div>
 
-        {/* Right Panel: Metric-specific Top Processes & Range Analytics */}
-        <div className="fluent-card p-4 flex flex-col gap-3">
-          <div className="flex items-center justify-between gap-2">
-            <div>
-              <h3 className="text-sm font-semibold flex items-center gap-1.5">
-                <History className="w-4 h-4" style={{ color: metricConfig.color }} />
-                {isRangeMode ? "Bereichs-Auswertung" : "„Was war das gerade?“"}
+        {/* Right Panel: Metric-specific Top Processes & Range Analytics — Locked height matching chart card */}
+        <div className="fluent-card p-4 flex flex-col gap-3 h-[524px] overflow-hidden min-w-0">
+          <div className="h-[40px] shrink-0 flex items-center justify-between gap-2 min-w-0">
+            <div className="min-w-0">
+              <h3 className="text-sm font-semibold flex items-center gap-1.5 truncate">
+                <History
+                  className="w-4 h-4 shrink-0"
+                  style={{ color: metricConfig.color }}
+                />
+                <span className="truncate">
+                  {isRangeMode ? "Bereichs-Auswertung" : "„Was war das gerade?“"}
+                </span>
               </h3>
               <p
-                className="text-[11px] tabular-nums mt-0.5"
+                className="text-[11px] tabular-nums mt-0.5 truncate"
                 style={{ color: "var(--text-muted)" }}
               >
                 {isRangeMode
@@ -960,31 +1069,36 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
                       : `Live (${formatTimeShort(analytics.startMs)})`}
               </p>
             </div>
-            {isPinned && (
-              <button
-                onClick={() => setSelectedRange(null)}
-                className="text-[11px] font-semibold hover:underline cursor-pointer shrink-0"
-                style={{ color: "var(--accent-cpu)" }}
-              >
-                Live
-              </button>
-            )}
+            <button
+              onClick={() => setSelectedRange(null)}
+              tabIndex={isPinned ? 0 : -1}
+              aria-hidden={!isPinned}
+              className={`text-[11px] font-semibold hover:underline cursor-pointer shrink-0 whitespace-nowrap ${
+                isPinned ? "" : "invisible pointer-events-none"
+              }`}
+              style={{ color: "var(--accent-cpu)" }}
+            >
+              Live
+            </button>
           </div>
 
-          {/* Summary Stat Cards */}
-          <div className="grid grid-cols-3 gap-1.5 text-center tabular-nums">
+          {/* Summary Stat Cards — Fixed height & nowrap so range/hover toggles never shift */}
+          <div className="grid grid-cols-3 gap-1.5 text-center tabular-nums shrink-0">
             <div
-              className="p-2 rounded-lg border"
+              className="h-[52px] px-1.5 py-1.5 rounded-lg border flex flex-col justify-center overflow-hidden"
               style={{
                 backgroundColor: "var(--bg-subtle)",
                 borderColor: "var(--border-subtle)",
               }}
             >
-              <div className="text-[10px]" style={{ color: "var(--text-muted)" }}>
+              <div
+                className="text-[10px] whitespace-nowrap truncate"
+                style={{ color: "var(--text-muted)" }}
+              >
                 CPU {isRangeMode ? "(Ø / Max)" : ""}
               </div>
               <div
-                className="text-xs font-bold mt-0.5"
+                className="text-xs font-bold mt-0.5 whitespace-nowrap truncate"
                 style={{ color: "var(--accent-cpu)" }}
               >
                 {isRangeMode
@@ -993,17 +1107,20 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
               </div>
             </div>
             <div
-              className="p-2 rounded-lg border"
+              className="h-[52px] px-1.5 py-1.5 rounded-lg border flex flex-col justify-center overflow-hidden"
               style={{
                 backgroundColor: "var(--bg-subtle)",
                 borderColor: "var(--border-subtle)",
               }}
             >
-              <div className="text-[10px]" style={{ color: "var(--text-muted)" }}>
+              <div
+                className="text-[10px] whitespace-nowrap truncate"
+                style={{ color: "var(--text-muted)" }}
+              >
                 RAM {isRangeMode ? "(Ø / Max)" : ""}
               </div>
               <div
-                className="text-xs font-bold mt-0.5"
+                className="text-xs font-bold mt-0.5 whitespace-nowrap truncate"
                 style={{ color: "var(--accent-ram)" }}
               >
                 {isRangeMode
@@ -1012,17 +1129,20 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
               </div>
             </div>
             <div
-              className="p-2 rounded-lg border"
+              className="h-[52px] px-1.5 py-1.5 rounded-lg border flex flex-col justify-center overflow-hidden"
               style={{
                 backgroundColor: "var(--bg-subtle)",
                 borderColor: "var(--border-subtle)",
               }}
             >
-              <div className="text-[10px]" style={{ color: "var(--text-muted)" }}>
+              <div
+                className="text-[10px] whitespace-nowrap truncate"
+                style={{ color: "var(--text-muted)" }}
+              >
                 GPU {isRangeMode ? "(Ø / Max)" : ""}
               </div>
               <div
-                className="text-xs font-bold mt-0.5"
+                className="text-xs font-bold mt-0.5 whitespace-nowrap truncate"
                 style={{ color: "var(--accent-gpu)" }}
               >
                 {isRangeMode
@@ -1038,19 +1158,19 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
               (snapshot.memory.pagedPoolBytes ?? 0) > 0 ||
               (snapshot.memory.nonPagedPoolBytes ?? 0) > 0) && (
               <div
-                className="px-3 py-2 rounded-lg border text-[11px] flex flex-col gap-1 tabular-nums"
+                className="shrink-0 px-3 py-2 rounded-lg border text-[11px] flex flex-col gap-1 tabular-nums"
                 style={{
                   backgroundColor: "var(--bg-subtle)",
                   borderColor: "var(--border-subtle)",
                 }}
               >
                 {(snapshot.memory.commitTotalBytes ?? 0) > 0 && (
-                  <div className="flex items-center justify-between">
-                    <span style={{ color: "var(--text-muted)" }}>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="truncate" style={{ color: "var(--text-muted)" }}>
                       Zugesichert (Commit)
                     </span>
                     <span
-                      className="font-semibold"
+                      className="font-semibold shrink-0 whitespace-nowrap"
                       style={{ color: "var(--accent-ram)" }}
                     >
                       {formatBytes(snapshot.memory.commitTotalBytes ?? 0)}
@@ -1062,11 +1182,11 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
                 )}
                 {((snapshot.memory.pagedPoolBytes ?? 0) > 0 ||
                   (snapshot.memory.nonPagedPoolBytes ?? 0) > 0) && (
-                  <div className="flex items-center justify-between">
-                    <span style={{ color: "var(--text-muted)" }}>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="truncate" style={{ color: "var(--text-muted)" }}>
                       Ausgelagerter / Nicht-ausgel. Pool
                     </span>
-                    <span className="font-medium">
+                    <span className="font-medium shrink-0 whitespace-nowrap">
                       {formatBytes(snapshot.memory.pagedPoolBytes ?? 0)} /{" "}
                       {formatBytes(snapshot.memory.nonPagedPoolBytes ?? 0)}
                     </span>
@@ -1076,40 +1196,68 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
             )}
 
           {/* Extra Disk / Net range stats when Disk or Net tab is selected */}
-          {(metric === "disk" || metric === "net") && (
+          {metric === "disk" && (
             <div
-              className="px-3 py-2 rounded-lg border text-xs flex items-center justify-between tabular-nums"
+              className="shrink-0 px-3 py-2 rounded-lg border text-[11px] flex flex-col gap-1 tabular-nums"
               style={{
                 backgroundColor: "var(--bg-subtle)",
                 borderColor: "var(--border-subtle)",
               }}
             >
-              <span style={{ color: "var(--text-muted)" }}>
-                {metric === "disk"
-                  ? isRangeMode
-                    ? "Datenträger (Ø / Peak)"
-                    : "Datenträger Durchsatz"
-                  : isRangeMode
-                    ? "Netzwerk (Ø / Peak)"
-                    : "Netzwerk Durchsatz"}
-              </span>
-              <span className="font-bold" style={{ color: metricConfig.color }}>
-                {metric === "disk"
-                  ? isRangeMode
+              <div className="flex items-center justify-between gap-2">
+                <span className="truncate" style={{ color: "var(--text-muted)" }}>
+                  Aktive Zeit · Ø Antwortzeit
+                </span>
+                <span
+                  className="font-bold shrink-0 whitespace-nowrap"
+                  style={{ color: metricConfig.color }}
+                >
+                  {(snapshot.disk.activePercent ?? 0).toFixed(0)}% ·{" "}
+                  {(snapshot.disk.avgResponseMs ?? 0).toFixed(1)} ms
+                </span>
+              </div>
+              <div className="flex items-center justify-between gap-2">
+                <span className="truncate" style={{ color: "var(--text-muted)" }}>
+                  {isRangeMode
+                    ? "Durchsatz (Ø / Peak)"
+                    : "Lesen / Schreiben"}
+                </span>
+                <span className="font-semibold shrink-0 whitespace-nowrap">
+                  {isRangeMode
                     ? `${analytics.avgDisk.toFixed(1)} / ${analytics.maxDisk.toFixed(1)} MB/s`
-                    : `${analytics.avgDisk.toFixed(1)} MB/s`
-                  : isRangeMode
-                    ? `${analytics.avgNet.toFixed(0)} / ${analytics.maxNet.toFixed(0)} KB/s`
-                    : `${analytics.avgNet.toFixed(0)} KB/s`}
+                    : `${formatSpeed(snapshot.disk.readBytesPerSec)} / ${formatSpeed(snapshot.disk.writeBytesPerSec)}`}
+                </span>
+              </div>
+            </div>
+          )}
+
+          {metric === "net" && (
+            <div
+              className="shrink-0 px-3 py-2 rounded-lg border text-xs flex items-center justify-between gap-2 tabular-nums"
+              style={{
+                backgroundColor: "var(--bg-subtle)",
+                borderColor: "var(--border-subtle)",
+              }}
+            >
+              <span className="truncate" style={{ color: "var(--text-muted)" }}>
+                {isRangeMode ? "Netzwerk (Ø / Peak)" : "Netzwerk Durchsatz"}
+              </span>
+              <span
+                className="font-bold shrink-0 whitespace-nowrap"
+                style={{ color: metricConfig.color }}
+              >
+                {isRangeMode
+                  ? `${analytics.avgNet.toFixed(0)} / ${analytics.maxNet.toFixed(0)} KB/s`
+                  : `${analytics.avgNet.toFixed(0)} KB/s`}
               </span>
             </div>
           )}
 
-          {/* Metric-Specific Top Processes List */}
-          <div className="flex flex-col gap-1.5">
-            <div className="flex items-center justify-between gap-2">
+          {/* Metric-Specific Top Processes List — Flex-1 scrollable inside fixed-height card */}
+          <div className="flex-1 min-h-0 flex flex-col gap-1.5">
+            <div className="h-5 shrink-0 flex items-center justify-between gap-2">
               <div
-                className="text-[10px] font-semibold uppercase tracking-wider"
+                className="text-[10px] font-semibold uppercase tracking-wider truncate whitespace-nowrap"
                 style={{ color: "var(--text-muted)" }}
               >
                 {isRangeMode
@@ -1119,11 +1267,11 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
               {totalAvailableProcesses > 5 && (
                 <button
                   onClick={() => setShowAllProcesses((v) => !v)}
-                  className="text-[11px] font-semibold hover:underline cursor-pointer shrink-0"
+                  className="text-[11px] font-semibold hover:underline cursor-pointer shrink-0 whitespace-nowrap"
                   style={{ color: metricConfig.color }}
                 >
                   {showAllProcesses
-                    ? "Weniger anzeigen"
+                    ? "Weniger"
                     : `Alle anzeigen (${totalAvailableProcesses})`}
                 </button>
               )}
@@ -1131,7 +1279,7 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
 
             {displayedProcesses.length === 0 ? (
               <div
-                className="p-4 rounded-xl border text-center text-xs"
+                className="flex-1 min-h-0 p-4 rounded-xl border flex items-center justify-center text-center text-xs"
                 style={{
                   backgroundColor: "var(--bg-subtle)",
                   borderColor: "var(--border-subtle)",
@@ -1141,363 +1289,1114 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
                 {metricConfig.emptyText}
               </div>
             ) : (
-              <div
-                className={
-                  showAllProcesses
-                    ? "flex flex-col gap-1.5 max-h-[380px] overflow-y-auto pr-0.5"
-                    : "flex flex-col gap-1.5"
-                }
-              >
+              <div className="flex-1 min-h-0 overflow-y-auto stable-scroll pr-0.5 flex flex-col gap-1.5">
                 {displayedProcesses.map((bp) => {
-                const cat = getCategoryMeta(bp.category);
+                  const cat = getCategoryMeta(bp.category);
 
-                let primaryVal = "";
-                let secondaryVal = "";
-                let barPct = 4;
+                  let primaryVal = "";
+                  let secondaryVal = "";
+                  let barPct = 4;
 
-                if (metric === "ram") {
-                  primaryVal = isRangeMode
-                    ? `Ø ${formatBytes(bp.avgRamBytes)}`
-                    : formatBytes(bp.avgRamBytes);
-                  if (isRangeMode && bp.maxRamBytes > bp.avgRamBytes * 1.03) {
-                    secondaryVal = `Peak ${formatBytes(bp.maxRamBytes)}`;
+                  if (metric === "ram") {
+                    primaryVal = isRangeMode
+                      ? `Ø ${formatBytes(bp.avgRamBytes)}`
+                      : formatBytes(bp.avgRamBytes);
+                    if (isRangeMode && bp.maxRamBytes > bp.avgRamBytes * 1.03) {
+                      secondaryVal = `Peak ${formatBytes(bp.maxRamBytes)}`;
+                    }
+                    barPct = Math.min(
+                      100,
+                      Math.max(
+                        4,
+                        (bp.avgRamBytes / Math.max(1, snapshot.memory.totalBytes)) *
+                          300
+                      )
+                    );
+                  } else if (metric === "gpu") {
+                    primaryVal = isRangeMode
+                      ? `Ø ${bp.avgGpu.toFixed(1)}%`
+                      : `${bp.avgGpu.toFixed(1)}%`;
+                    if (isRangeMode) {
+                      secondaryVal = `Peak ${bp.maxGpu.toFixed(1)}%`;
+                    }
+                    barPct = Math.min(
+                      100,
+                      Math.max(4, (bp.avgGpu / Math.max(10, analytics.maxGpu)) * 100)
+                    );
+                  } else if (metric === "disk") {
+                    primaryVal = isRangeMode
+                      ? `Ø ${formatSpeed(bp.avgDiskBytes)}`
+                      : formatSpeed(bp.avgDiskBytes);
+                    if (isRangeMode) {
+                      secondaryVal = `Peak ${formatSpeed(bp.maxDiskBytes)}`;
+                    }
+                    barPct = Math.min(
+                      100,
+                      Math.max(4, (bp.maxDiskBytes / maxDiskInList) * 100)
+                    );
+                  } else if (metric === "net") {
+                    const mainConns = isRangeMode
+                      ? Math.round(bp.avgNetConns)
+                      : bp.maxNetConns;
+                    primaryVal =
+                      mainConns > 0
+                        ? `${mainConns} aktiv`
+                        : `${bp.maxNetPorts} Port${bp.maxNetPorts === 1 ? "" : "s"}`;
+                    if (isRangeMode && bp.maxNetConns > mainConns) {
+                      secondaryVal = `Peak ${bp.maxNetConns}${bp.maxNetPorts > 0 ? ` · ${bp.maxNetPorts}P` : ""}`;
+                    } else if (mainConns > 0 && bp.maxNetPorts > 0) {
+                      secondaryVal = `${bp.maxNetPorts} offene Ports`;
+                    }
+                    barPct = Math.min(
+                      100,
+                      Math.max(
+                        6,
+                        ((bp.maxNetConns || bp.maxNetPorts) / maxNetConnsInList) *
+                          100
+                      )
+                    );
+                  } else {
+                    primaryVal = isRangeMode
+                      ? `Ø ${bp.avgCpu.toFixed(1)}%`
+                      : `${bp.avgCpu.toFixed(1)}%`;
+                    if (isRangeMode) {
+                      secondaryVal = `Peak ${bp.maxCpu.toFixed(1)}%`;
+                    }
+                    barPct = Math.min(
+                      100,
+                      Math.max(4, (bp.avgCpu / Math.max(10, analytics.maxCpu)) * 100)
+                    );
                   }
-                  barPct = Math.min(
-                    100,
-                    Math.max(
-                      4,
-                      (bp.avgRamBytes / Math.max(1, snapshot.memory.totalBytes)) *
-                        300
-                    )
-                  );
-                } else if (metric === "gpu") {
-                  primaryVal = isRangeMode
-                    ? `Ø ${bp.avgGpu.toFixed(1)}%`
-                    : `${bp.avgGpu.toFixed(1)}%`;
-                  if (isRangeMode) {
-                    secondaryVal = `Peak ${bp.maxGpu.toFixed(1)}%`;
-                  }
-                  barPct = Math.min(
-                    100,
-                    Math.max(4, (bp.avgGpu / Math.max(10, analytics.maxGpu)) * 100)
-                  );
-                } else if (metric === "disk") {
-                  primaryVal = isRangeMode
-                    ? `Ø ${formatSpeed(bp.avgDiskBytes)}`
-                    : formatSpeed(bp.avgDiskBytes);
-                  if (isRangeMode) {
-                    secondaryVal = `Peak ${formatSpeed(bp.maxDiskBytes)}`;
-                  }
-                  barPct = Math.min(
-                    100,
-                    Math.max(4, (bp.maxDiskBytes / maxDiskInList) * 100)
-                  );
-                } else if (metric === "net") {
-                  const mainConns = isRangeMode
-                    ? Math.round(bp.avgNetConns)
-                    : bp.maxNetConns;
-                  primaryVal =
-                    mainConns > 0
-                      ? `${mainConns} aktiv`
-                      : `${bp.maxNetPorts} Port${bp.maxNetPorts === 1 ? "" : "s"}`;
-                  if (isRangeMode && bp.maxNetConns > mainConns) {
-                    secondaryVal = `Peak ${bp.maxNetConns}${bp.maxNetPorts > 0 ? ` · ${bp.maxNetPorts}P` : ""}`;
-                  } else if (mainConns > 0 && bp.maxNetPorts > 0) {
-                    secondaryVal = `${bp.maxNetPorts} offene Ports`;
-                  }
-                  barPct = Math.min(
-                    100,
-                    Math.max(
-                      6,
-                      ((bp.maxNetConns || bp.maxNetPorts) / maxNetConnsInList) *
-                        100
-                    )
-                  );
-                } else {
-                  primaryVal = isRangeMode
-                    ? `Ø ${bp.avgCpu.toFixed(1)}%`
-                    : `${bp.avgCpu.toFixed(1)}%`;
-                  if (isRangeMode) {
-                    secondaryVal = `Peak ${bp.maxCpu.toFixed(1)}%`;
-                  }
-                  barPct = Math.min(
-                    100,
-                    Math.max(4, (bp.avgCpu / Math.max(10, analytics.maxCpu)) * 100)
-                  );
-                }
 
-                const blameFallback: BlameProcess = {
-                  pid: bp.pid,
-                  name: bp.name,
-                  subtitle: bp.subtitle,
-                  category: bp.category,
-                  cpuPercent: bp.avgCpu,
-                  gpuPercent: bp.avgGpu,
-                  memoryBytes: bp.avgRamBytes,
-                  diskBytesPerSec: bp.avgDiskBytes,
-                  netConnections: bp.maxNetConns,
-                  netListeningPorts: bp.maxNetPorts,
-                };
+                  const blameFallback: BlameProcess = {
+                    pid: bp.pid,
+                    name: bp.name,
+                    subtitle: bp.subtitle,
+                    category: bp.category,
+                    cpuPercent: bp.avgCpu,
+                    gpuPercent: bp.avgGpu,
+                    memoryBytes: bp.avgRamBytes,
+                    diskBytesPerSec: bp.avgDiskBytes,
+                    netConnections: bp.maxNetConns,
+                    netListeningPorts: bp.maxNetPorts,
+                  };
 
-                return (
-                  <button
-                    key={bp.key}
-                    onClick={() => onInspectPid(bp.pid, blameFallback)}
-                    className="flex flex-col gap-1 px-2.5 py-2 rounded-xl border text-left hover:bg-[var(--bg-surface-hover)] cursor-pointer transition-colors"
+                  return (
+                    <button
+                      key={bp.key}
+                      onClick={() => onInspectPid(bp.pid, blameFallback)}
+                      className="h-[56px] shrink-0 flex flex-col justify-between px-2.5 py-2 rounded-xl border text-left hover:bg-[var(--bg-surface-hover)] cursor-pointer transition-colors"
+                      style={{
+                        backgroundColor: "var(--bg-subtle)",
+                        borderColor: "var(--border-subtle)",
+                      }}
+                    >
+                      <div className="flex items-center justify-between gap-2 w-full min-w-0">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span
+                            className="w-2 h-2 rounded-full shrink-0"
+                            style={{ backgroundColor: cat.color }}
+                          />
+                          <div className="min-w-0 leading-tight">
+                            <div className="text-xs font-semibold truncate">
+                              {bp.name}
+                            </div>
+                            <div
+                              className="text-[10px] truncate mt-0.5"
+                              style={{ color: "var(--text-muted)" }}
+                            >
+                              PID {bp.pid}
+                              {bp.subtitle ? ` • ${bp.subtitle}` : ""}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="h-[30px] flex flex-col justify-center items-end shrink-0 tabular-nums leading-tight">
+                          <div
+                            className="text-xs font-bold whitespace-nowrap"
+                            style={{ color: metricConfig.color }}
+                          >
+                            {primaryVal}
+                          </div>
+                          {secondaryVal && (
+                            <div
+                              className="text-[10px] whitespace-nowrap mt-0.5"
+                              style={{ color: "var(--text-muted)" }}
+                            >
+                              {secondaryVal}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      <div
+                        className="h-1 w-full rounded-full overflow-hidden shrink-0"
+                        style={{ backgroundColor: "var(--bg-surface-solid)" }}
+                      >
+                        <div
+                          className="h-full rounded-full"
+                          style={{
+                            width: `${barPct}%`,
+                            backgroundColor: metricConfig.color,
+                          }}
+                        />
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Residual CPU note — ALWAYS rendered on CPU tab with fixed height so hover NEVER jumps */}
+            {metric === "cpu" && (
+              <div
+                className={`h-[34px] shrink-0 px-2.5 rounded-xl border text-[11px] flex items-center justify-between gap-2 transition-opacity ${
+                  analytics.avgUnaccounted >= 4 || analytics.maxUnaccounted >= 12
+                    ? "opacity-100"
+                    : "opacity-55"
+                }`}
+                style={{
+                  backgroundColor: "var(--bg-subtle)",
+                  borderColor: "var(--border-subtle)",
+                  color: "var(--text-secondary)",
+                }}
+                title="CPU-Last durch Prozesse, die innerhalb derselben Sekunde gestartet und wieder beendet wurden, oder durch Hardware-Interrupts/DPCs."
+              >
+                <span className="flex items-center gap-1.5 min-w-0">
+                  <Info className="w-3.5 h-3.5 shrink-0 opacity-70" />
+                  <span className="truncate">
+                    Kurzlebige Prozesse / Kernel-Interrupts
+                  </span>
+                </span>
+                <span className="font-semibold tabular-nums shrink-0 whitespace-nowrap">
+                  {isRangeMode
+                    ? `Ø ${analytics.avgUnaccounted.toFixed(1)}% · Peak ${analytics.maxUnaccounted.toFixed(0)}%`
+                    : `${analytics.avgUnaccounted.toFixed(1)}%`}
+                </span>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Hardware Deep-Dive Grid — Context-aware for GPU & Disk (Task-Manager style) */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        {metric === "gpu" ? (
+          <>
+            {/* GPU Engines (3D, Copy, Video Encode, Video Decode) & Memory Breakdown */}
+            <div className="fluent-card p-4 flex flex-col gap-3">
+              <div className="flex items-center justify-between gap-2">
+                <h4 className="text-sm font-semibold truncate">
+                  GPU-Engines & Speicher
+                </h4>
+                <span
+                  className="text-xs font-semibold tabular-nums shrink-0"
+                  style={{ color: "var(--accent-gpu)" }}
+                >
+                  {snapshot.gpu.name}
+                </span>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2.5">
+                {(
+                  [
+                    {
+                      label: "3D",
+                      val: snapshot.gpu.engine3dPercent ?? 0,
+                      series: gpuEngineSeries.e3d,
+                    },
+                    {
+                      label: "Copy",
+                      val: snapshot.gpu.engineCopyPercent ?? 0,
+                      series: gpuEngineSeries.copy,
+                    },
+                    {
+                      label: "Video Encode",
+                      val: snapshot.gpu.engineVideoEncodePercent ?? 0,
+                      series: gpuEngineSeries.encode,
+                    },
+                    {
+                      label: "Video Decode",
+                      val: snapshot.gpu.engineVideoDecodePercent ?? 0,
+                      series: gpuEngineSeries.decode,
+                    },
+                  ] as const
+                ).map((eng) => (
+                  <div
+                    key={eng.label}
+                    className="p-2.5 rounded-xl border flex flex-col gap-1.5"
                     style={{
                       backgroundColor: "var(--bg-subtle)",
                       borderColor: "var(--border-subtle)",
                     }}
                   >
-                    <div className="flex items-center justify-between gap-2 w-full">
-                      <div className="flex items-center gap-2 min-w-0">
-                        <span
-                          className="w-2 h-2 rounded-full shrink-0"
-                          style={{ backgroundColor: cat.color }}
-                        />
-                        <div className="min-w-0">
-                          <div className="text-xs font-semibold truncate">
-                            {bp.name}
-                          </div>
-                          <div
-                            className="text-[10px] truncate"
-                            style={{ color: "var(--text-muted)" }}
-                          >
-                            PID {bp.pid}
-                            {bp.subtitle ? ` • ${bp.subtitle}` : ""}
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="text-right shrink-0 tabular-nums">
-                        <div
-                          className="text-xs font-bold"
-                          style={{ color: metricConfig.color }}
-                        >
-                          {primaryVal}
-                        </div>
-                        {secondaryVal && (
-                          <div
-                            className="text-[10px]"
-                            style={{ color: "var(--text-muted)" }}
-                          >
-                            {secondaryVal}
-                          </div>
-                        )}
-                      </div>
+                    <div className="flex items-center justify-between text-[11px] tabular-nums">
+                      <span
+                        className="font-medium"
+                        style={{ color: "var(--text-secondary)" }}
+                      >
+                        {eng.label}
+                      </span>
+                      <span
+                        className="font-bold"
+                        style={{ color: "var(--accent-gpu)" }}
+                      >
+                        {eng.val.toFixed(0)}%
+                      </span>
                     </div>
-
-                    <div
-                      className="h-1 w-full rounded-full overflow-hidden"
-                      style={{ backgroundColor: "var(--bg-surface-solid)" }}
-                    >
-                      <div
-                        className="h-full rounded-full"
-                        style={{
-                          width: `${barPct}%`,
-                          backgroundColor: metricConfig.color,
-                        }}
-                      />
-                    </div>
-                  </button>
-                );
-              })}
+                    <Sparkline
+                      data={eng.series}
+                      color="var(--accent-gpu)"
+                      width={220}
+                      height={36}
+                      maxValue={100}
+                      className="w-full block"
+                    />
+                  </div>
+                ))}
               </div>
-            )}
 
-            {/* Residual CPU note ONLY on CPU tab */}
-            {metric === "cpu" &&
-              (analytics.avgUnaccounted >= 4 ||
-                analytics.maxUnaccounted >= 12) && (
+              {/* Dedicated, Shared & Combined GPU Memory */}
+              <div className="flex flex-col gap-2 pt-1">
+                {(() => {
+                  const dedUsed = snapshot.gpu.vramUsedBytes;
+                  const dedTot = snapshot.gpu.vramTotalBytes;
+                  const dedPct = dedTot > 0 ? (dedUsed / dedTot) * 100 : 0;
+                  const shUsed = snapshot.gpu.sharedUsedBytes ?? 0;
+                  const shTot = snapshot.gpu.sharedTotalBytes ?? 0;
+                  const shPct = shTot > 0 ? (shUsed / shTot) * 100 : 0;
+                  const allUsed = dedUsed + shUsed;
+                  const allTot = dedTot + shTot;
+
+                  return (
+                    <>
+                      <div>
+                        <div className="flex items-center justify-between text-[11px] tabular-nums mb-1">
+                          <span style={{ color: "var(--text-muted)" }}>
+                            Dedizierter GPU-Speicher
+                          </span>
+                          <span className="font-semibold">
+                            {formatBytes(dedUsed)} / {formatBytes(dedTot)}
+                          </span>
+                        </div>
+                        <div
+                          className="h-2 w-full rounded-full overflow-hidden"
+                          style={{ backgroundColor: "var(--bg-surface-solid)" }}
+                        >
+                          <div
+                            className="h-full w-full rounded-full origin-left transition-transform duration-300"
+                            style={{
+                              transform: `scaleX(${Math.min(1, Math.max(0.01, dedPct / 100))})`,
+                              backgroundColor: "var(--accent-gpu)",
+                            }}
+                          />
+                        </div>
+                      </div>
+
+                      {shTot > 0 && (
+                        <div>
+                          <div className="flex items-center justify-between text-[11px] tabular-nums mb-1">
+                            <span style={{ color: "var(--text-muted)" }}>
+                              Gemeinsamer GPU-Speicher
+                            </span>
+                            <span className="font-semibold">
+                              {formatBytes(shUsed)} / {formatBytes(shTot)}
+                            </span>
+                          </div>
+                          <div
+                            className="h-2 w-full rounded-full overflow-hidden"
+                            style={{
+                              backgroundColor: "var(--bg-surface-solid)",
+                            }}
+                          >
+                            <div
+                              className="h-full w-full rounded-full origin-left transition-transform duration-300 opacity-75"
+                              style={{
+                                transform: `scaleX(${Math.min(1, Math.max(0.01, shPct / 100))})`,
+                                backgroundColor: "var(--accent-ram)",
+                              }}
+                            />
+                          </div>
+                        </div>
+                      )}
+
+                      {allTot > 0 && (
+                        <div
+                          className="flex items-center justify-between text-[11px] tabular-nums pt-1 border-t"
+                          style={{
+                            borderColor: "var(--border-subtle)",
+                            color: "var(--text-secondary)",
+                          }}
+                        >
+                          <span>GPU-Speicher gesamt</span>
+                          <span className="font-semibold">
+                            {formatBytes(allUsed)} / {formatBytes(allTot)}
+                          </span>
+                        </div>
+                      )}
+                    </>
+                  );
+                })()}
+              </div>
+            </div>
+
+            {/* Right Card on GPU Tab: GPU Details, Clocks, Fan & Driver Info */}
+            <div className="fluent-card p-4 flex flex-col gap-3">
+              <h4 className="text-sm font-semibold">
+                GPU-Sensoren & Treiberdetails
+              </h4>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs tabular-nums">
                 <div
-                  className="px-2.5 py-2 rounded-xl border text-[11px] flex items-center justify-between gap-2"
+                  className="p-2.5 rounded-xl border"
                   style={{
                     backgroundColor: "var(--bg-subtle)",
                     borderColor: "var(--border-subtle)",
-                    color: "var(--text-secondary)",
                   }}
-                  title="CPU-Last durch Prozesse, die innerhalb derselben Sekunde gestartet und wieder beendet wurden, oder durch Hardware-Interrupts/DPCs."
                 >
-                  <span className="flex items-center gap-1.5 min-w-0">
-                    <Info className="w-3.5 h-3.5 shrink-0 opacity-70" />
-                    <span className="truncate">
-                      Kurzlebige Prozesse / Kernel-Interrupts
-                    </span>
-                  </span>
-                  <span className="font-semibold tabular-nums shrink-0">
-                    {isRangeMode
-                      ? `Ø ${analytics.avgUnaccounted.toFixed(1)}% · Peak ${analytics.maxUnaccounted.toFixed(0)}%`
-                      : `${analytics.avgUnaccounted.toFixed(1)}%`}
-                  </span>
+                  <div
+                    className="text-[10px]"
+                    style={{ color: "var(--text-muted)" }}
+                  >
+                    Temperatur
+                  </div>
+                  <div className="text-sm font-bold mt-0.5 flex items-center gap-1 text-emerald-500">
+                    <Thermometer className="w-3.5 h-3.5" />
+                    {snapshot.gpu.temperatureC != null
+                      ? `${snapshot.gpu.temperatureC.toFixed(0)} °C`
+                      : "–"}
+                  </div>
                 </div>
-              )}
-          </div>
-        </div>
-      </div>
 
-      {/* Hardware Deep-Dive Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <div className="fluent-card p-4">
-          <div className="flex items-center justify-between mb-3">
-            <h4 className="text-sm font-semibold">
-              Logische CPU-Kerne ({snapshot.cpu.logicalCores})
-            </h4>
-            <span
-              className="text-xs tabular-nums"
-              style={{ color: "var(--text-muted)" }}
-            >
-              {(snapshot.cpu.frequencyMhz / 1000).toFixed(2)} GHz
-            </span>
-          </div>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-            {snapshot.cpu.perCore.map((val, idx) => (
+                <div
+                  className="p-2.5 rounded-xl border"
+                  style={{
+                    backgroundColor: "var(--bg-subtle)",
+                    borderColor: "var(--border-subtle)",
+                  }}
+                >
+                  <div
+                    className="text-[10px]"
+                    style={{ color: "var(--text-muted)" }}
+                  >
+                    Leistung
+                  </div>
+                  <div className="text-sm font-bold mt-0.5 flex items-center gap-1 text-amber-500">
+                    <Zap className="w-3.5 h-3.5" />
+                    {snapshot.gpu.powerWatts != null
+                      ? `${snapshot.gpu.powerWatts.toFixed(1)} W`
+                      : "–"}
+                  </div>
+                  {snapshot.gpu.powerLimitWatts != null && (
+                    <div
+                      className="text-[10px] mt-0.5"
+                      style={{ color: "var(--text-muted)" }}
+                    >
+                      Limit {snapshot.gpu.powerLimitWatts.toFixed(0)} W
+                    </div>
+                  )}
+                </div>
+
+                <div
+                  className="p-2.5 rounded-xl border"
+                  style={{
+                    backgroundColor: "var(--bg-subtle)",
+                    borderColor: "var(--border-subtle)",
+                  }}
+                >
+                  <div
+                    className="text-[10px]"
+                    style={{ color: "var(--text-muted)" }}
+                  >
+                    Lüfter
+                  </div>
+                  <div className="text-sm font-bold mt-0.5 flex items-center gap-1">
+                    <Fan className="w-3.5 h-3.5 text-sky-500" />
+                    {snapshot.gpu.fanSpeedPercent != null
+                      ? `${snapshot.gpu.fanSpeedPercent}%`
+                      : "–"}
+                  </div>
+                </div>
+
+                <div
+                  className="p-2.5 rounded-xl border"
+                  style={{
+                    backgroundColor: "var(--bg-subtle)",
+                    borderColor: "var(--border-subtle)",
+                  }}
+                >
+                  <div
+                    className="text-[10px]"
+                    style={{ color: "var(--text-muted)" }}
+                  >
+                    GPU-Takt
+                  </div>
+                  <div
+                    className="text-sm font-bold mt-0.5 flex items-center gap-1"
+                    style={{ color: "var(--accent-gpu)" }}
+                  >
+                    <Gauge className="w-3.5 h-3.5" />
+                    {snapshot.gpu.clockMhz != null
+                      ? `${snapshot.gpu.clockMhz} MHz`
+                      : "–"}
+                  </div>
+                </div>
+
+                <div
+                  className="p-2.5 rounded-xl border"
+                  style={{
+                    backgroundColor: "var(--bg-subtle)",
+                    borderColor: "var(--border-subtle)",
+                  }}
+                >
+                  <div
+                    className="text-[10px]"
+                    style={{ color: "var(--text-muted)" }}
+                  >
+                    VRAM-Takt
+                  </div>
+                  <div className="text-sm font-bold mt-0.5">
+                    {snapshot.gpu.memoryClockMhz != null
+                      ? `${snapshot.gpu.memoryClockMhz} MHz`
+                      : "–"}
+                  </div>
+                </div>
+
+                <div
+                  className="p-2.5 rounded-xl border"
+                  style={{
+                    backgroundColor: "var(--bg-subtle)",
+                    borderColor: "var(--border-subtle)",
+                  }}
+                >
+                  <div
+                    className="text-[10px]"
+                    style={{ color: "var(--text-muted)" }}
+                  >
+                    Hersteller
+                  </div>
+                  <div className="text-sm font-bold mt-0.5 truncate">
+                    {snapshot.gpu.vendor}
+                  </div>
+                </div>
+              </div>
+
               <div
-                key={idx}
-                className="p-2 rounded-xl border"
+                className="p-3 rounded-xl border text-xs flex flex-col gap-1.5 tabular-nums"
                 style={{
                   backgroundColor: "var(--bg-subtle)",
                   borderColor: "var(--border-subtle)",
                 }}
               >
-                <div className="flex items-center justify-between text-[11px] tabular-nums mb-1">
-                  <span style={{ color: "var(--text-muted)" }}>Kern {idx}</span>
-                  <span className="font-semibold">{val.toFixed(0)}%</span>
+                <div className="flex items-center justify-between gap-2">
+                  <span style={{ color: "var(--text-muted)" }}>
+                    Treiberversion
+                  </span>
+                  <span className="font-semibold">
+                    {snapshot.gpu.driverVersion ?? "–"}
+                  </span>
                 </div>
+                <div className="flex items-center justify-between gap-2">
+                  <span style={{ color: "var(--text-muted)" }}>
+                    Treiberdatum
+                  </span>
+                  <span className="font-semibold">
+                    {snapshot.gpu.driverDate ?? "–"}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between gap-2">
+                  <span style={{ color: "var(--text-muted)" }}>
+                    Physischer Standort
+                  </span>
+                  <span className="font-semibold truncate">
+                    {snapshot.gpu.pciLocation ?? "–"}
+                  </span>
+                </div>
+              </div>
+            </div>
+          </>
+        ) : metric === "disk" ? (
+          <>
+            {/* Disk Activity & Per-Drive Deep Dive (Windows Task Manager style) */}
+            <div className="fluent-card p-4 flex flex-col gap-3">
+              <div className="flex items-center justify-between gap-2">
+                <h4 className="text-sm font-semibold">
+                  Datenträger-Aktivität & Laufwerke ({snapshot.disk.drives.length})
+                </h4>
+                <span
+                  className="text-xs font-semibold tabular-nums"
+                  style={{ color: "var(--accent-disk)" }}
+                >
+                  Aktive Zeit {(snapshot.disk.activePercent ?? 0).toFixed(0)}%
+                </span>
+              </div>
+
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs tabular-nums">
                 <div
-                  className="h-1.5 rounded-full overflow-hidden"
-                  style={{ backgroundColor: "var(--bg-surface-solid)" }}
+                  className="p-2.5 rounded-xl border"
+                  style={{
+                    backgroundColor: "var(--bg-subtle)",
+                    borderColor: "var(--border-subtle)",
+                  }}
                 >
                   <div
-                    className="h-full w-full rounded-full origin-left transition-transform duration-300"
-                    style={{
-                      transform: `scaleX(${Math.min(1, Math.max(0.03, val / 100))})`,
-                      backgroundColor:
-                        val > 80
-                          ? "#ef4444"
-                          : val > 55
-                            ? "#f97316"
-                            : "var(--accent-cpu)",
-                    }}
-                  />
+                    className="text-[10px]"
+                    style={{ color: "var(--text-muted)" }}
+                  >
+                    Aktive Zeit
+                  </div>
+                  <div
+                    className="text-sm font-bold mt-0.5"
+                    style={{ color: "var(--accent-disk)" }}
+                  >
+                    {(snapshot.disk.activePercent ?? 0).toFixed(0)}%
+                  </div>
+                </div>
+                <div
+                  className="p-2.5 rounded-xl border"
+                  style={{
+                    backgroundColor: "var(--bg-subtle)",
+                    borderColor: "var(--border-subtle)",
+                  }}
+                >
+                  <div
+                    className="text-[10px]"
+                    style={{ color: "var(--text-muted)" }}
+                  >
+                    Ø Antwortzeit
+                  </div>
+                  <div className="text-sm font-bold mt-0.5">
+                    {(snapshot.disk.avgResponseMs ?? 0).toFixed(1)} ms
+                  </div>
+                </div>
+                <div
+                  className="p-2.5 rounded-xl border"
+                  style={{
+                    backgroundColor: "var(--bg-subtle)",
+                    borderColor: "var(--border-subtle)",
+                  }}
+                >
+                  <div
+                    className="text-[10px]"
+                    style={{ color: "var(--text-muted)" }}
+                  >
+                    Lesen
+                  </div>
+                  <div className="text-sm font-bold mt-0.5 text-emerald-500">
+                    {formatSpeed(snapshot.disk.readBytesPerSec)}
+                  </div>
+                </div>
+                <div
+                  className="p-2.5 rounded-xl border"
+                  style={{
+                    backgroundColor: "var(--bg-subtle)",
+                    borderColor: "var(--border-subtle)",
+                  }}
+                >
+                  <div
+                    className="text-[10px]"
+                    style={{ color: "var(--text-muted)" }}
+                  >
+                    Schreiben
+                  </div>
+                  <div className="text-sm font-bold mt-0.5 text-amber-500">
+                    {formatSpeed(snapshot.disk.writeBytesPerSec)}
+                  </div>
                 </div>
               </div>
-            ))}
-          </div>
-        </div>
 
-        <div className="fluent-card p-4 flex flex-col gap-3">
-          <h4 className="text-sm font-semibold">Hardware & Sensoren</h4>
-          <div className="grid grid-cols-2 gap-2.5 text-xs">
-            <div
-              className="p-3 rounded-xl border"
-              style={{
-                backgroundColor: "var(--bg-subtle)",
-                borderColor: "var(--border-subtle)",
-              }}
-            >
-              <div
-                className="text-[11px] mb-1"
-                style={{ color: "var(--text-muted)" }}
-              >
-                Prozessor
-              </div>
-              <div className="font-semibold truncate" title={snapshot.cpu.brand}>
-                {snapshot.cpu.brand}
-              </div>
-              <div
-                className="text-[11px] mt-1 tabular-nums"
-                style={{ color: "var(--text-secondary)" }}
-              >
-                {snapshot.cpu.physicalCores} Kerne / {snapshot.cpu.logicalCores}{" "}
-                Threads
+              <div className="flex flex-col gap-2">
+                {snapshot.disk.drives.map((d) => {
+                  const typeLabel = d.busType
+                    ? `${d.kind !== "Unknown" ? d.kind : "Laufwerk"} (${d.busType})`
+                    : d.kind;
+                  const actPct = d.activePercent ?? 0;
+                  return (
+                    <div
+                      key={d.mountPoint}
+                      className="p-3 rounded-xl border flex flex-col gap-2 text-xs tabular-nums"
+                      style={{
+                        backgroundColor: "var(--bg-subtle)",
+                        borderColor: "var(--border-subtle)",
+                      }}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="min-w-0">
+                          <div className="font-semibold flex items-center gap-1.5 truncate">
+                            <span>{d.mountPoint}</span>
+                            {d.model && (
+                              <span
+                                className="font-medium truncate"
+                                style={{ color: "var(--text-secondary)" }}
+                                title={d.model}
+                              >
+                                {d.model}
+                              </span>
+                            )}
+                            {d.isSystemDrive && (
+                              <span
+                                className="text-[10px] px-1.5 py-0.5 rounded font-semibold shrink-0"
+                                style={{
+                                  backgroundColor: "var(--accent-disk-soft)",
+                                  color: "var(--accent-disk)",
+                                }}
+                              >
+                                System
+                              </span>
+                            )}
+                          </div>
+                          <div
+                            className="text-[10px] mt-0.5"
+                            style={{ color: "var(--text-muted)" }}
+                          >
+                            {typeLabel} · {d.fileSystem} ·{" "}
+                            {formatBytes(d.usedBytes)} /{" "}
+                            {formatBytes(d.totalBytes)} ({formatBytes(d.availableBytes)} frei)
+                          </div>
+                        </div>
+                        <div className="text-right shrink-0">
+                          <div
+                            className="text-xs font-bold"
+                            style={{ color: "var(--accent-disk)" }}
+                          >
+                            {actPct.toFixed(0)}% aktiv
+                          </div>
+                          <div
+                            className="text-[10px]"
+                            style={{ color: "var(--text-muted)" }}
+                          >
+                            {(d.avgResponseMs ?? 0).toFixed(1)} ms
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <div
+                          className="h-1.5 flex-1 rounded-full overflow-hidden"
+                          style={{ backgroundColor: "var(--bg-surface-solid)" }}
+                        >
+                          <div
+                            className="h-full w-full rounded-full origin-left transition-transform duration-300"
+                            style={{
+                              transform: `scaleX(${Math.min(1, Math.max(0.02, actPct / 100))})`,
+                              backgroundColor:
+                                actPct > 85 ? "#ef4444" : "var(--accent-disk)",
+                            }}
+                          />
+                        </div>
+                        <span
+                          className="text-[10px] shrink-0 whitespace-nowrap"
+                          style={{ color: "var(--text-muted)" }}
+                        >
+                          R {formatSpeed(d.readBytesPerSec ?? 0)} · W{" "}
+                          {formatSpeed(d.writeBytesPerSec ?? 0)}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             </div>
 
-            <div
-              className="p-3 rounded-xl border"
-              style={{
-                backgroundColor: "var(--bg-subtle)",
-                borderColor: "var(--border-subtle)",
-              }}
-            >
-              <div
-                className="text-[11px] mb-1"
-                style={{ color: "var(--text-muted)" }}
-              >
-                Grafikkarte
+            {/* Right Card on Disk Tab: Hardware & Sensoren */}
+            <div className="fluent-card p-4 flex flex-col gap-3">
+              <h4 className="text-sm font-semibold">Hardware & Sensoren</h4>
+              <div className="grid grid-cols-2 gap-2.5 text-xs">
+                <div
+                  className="p-3 rounded-xl border min-h-[96px] flex flex-col justify-between"
+                  style={{
+                    backgroundColor: "var(--bg-subtle)",
+                    borderColor: "var(--border-subtle)",
+                  }}
+                >
+                  <div>
+                    <div
+                      className="text-[11px] mb-1"
+                      style={{ color: "var(--text-muted)" }}
+                    >
+                      Prozessor
+                    </div>
+                    <div
+                      className="font-semibold truncate"
+                      title={snapshot.cpu.brand}
+                    >
+                      {snapshot.cpu.brand}
+                    </div>
+                    <div
+                      className="text-[11px] mt-1 tabular-nums truncate"
+                      style={{ color: "var(--text-secondary)" }}
+                    >
+                      {snapshot.cpu.physicalCores} Kerne /{" "}
+                      {snapshot.cpu.logicalCores} Threads ·{" "}
+                      {(snapshot.cpu.frequencyMhz / 1000).toFixed(2)} GHz
+                    </div>
+                  </div>
+                </div>
+                <div
+                  className="p-3 rounded-xl border min-h-[96px] flex flex-col justify-between"
+                  style={{
+                    backgroundColor: "var(--bg-subtle)",
+                    borderColor: "var(--border-subtle)",
+                  }}
+                >
+                  <div>
+                    <div
+                      className="text-[11px] mb-1"
+                      style={{ color: "var(--text-muted)" }}
+                    >
+                      Grafikkarte
+                    </div>
+                    <div
+                      className="font-semibold truncate"
+                      title={snapshot.gpu.name}
+                    >
+                      {snapshot.gpu.name}
+                    </div>
+                  </div>
+                  <div className="text-[11px] mt-1.5 flex items-center gap-2 tabular-nums">
+                    {snapshot.gpu.temperatureC != null && (
+                      <span className="inline-flex items-center gap-0.5 text-emerald-500 font-medium">
+                        <Thermometer className="w-3 h-3" />
+                        {snapshot.gpu.temperatureC.toFixed(0)}°C
+                      </span>
+                    )}
+                    {snapshot.gpu.powerWatts != null && (
+                      <span className="inline-flex items-center gap-0.5 text-amber-500 font-medium">
+                        <Zap className="w-3 h-3" />
+                        {snapshot.gpu.powerWatts.toFixed(1)}W
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <div
+                  className="p-3 rounded-xl border min-h-[82px]"
+                  style={{
+                    backgroundColor: "var(--bg-subtle)",
+                    borderColor: "var(--border-subtle)",
+                  }}
+                >
+                  <div
+                    className="text-[11px] mb-1"
+                    style={{ color: "var(--text-muted)" }}
+                  >
+                    Arbeitsspeicher
+                  </div>
+                  <div className="font-semibold tabular-nums">
+                    {formatBytes(snapshot.memory.usedBytes)} /{" "}
+                    {formatBytes(snapshot.memory.totalBytes)}
+                  </div>
+                  <div
+                    className="text-[11px] mt-1 tabular-nums"
+                    style={{ color: "var(--text-secondary)" }}
+                  >
+                    Swap: {formatBytes(snapshot.memory.swapUsedBytes)}
+                  </div>
+                </div>
+                <div
+                  className="p-3 rounded-xl border min-h-[82px]"
+                  style={{
+                    backgroundColor: "var(--bg-subtle)",
+                    borderColor: "var(--border-subtle)",
+                  }}
+                >
+                  <div
+                    className="text-[11px] mb-1"
+                    style={{ color: "var(--text-muted)" }}
+                  >
+                    Betriebssystem
+                  </div>
+                  <div className="font-semibold truncate">
+                    {snapshot.system.osName}
+                  </div>
+                  <div
+                    className="text-[11px] mt-1 truncate"
+                    style={{ color: "var(--text-secondary)" }}
+                  >
+                    Host: {snapshot.system.hostname}
+                  </div>
+                </div>
               </div>
-              <div className="font-semibold truncate" title={snapshot.gpu.name}>
-                {snapshot.gpu.name}
-              </div>
-              <div
-                className="text-[11px] mt-1 flex items-center gap-2 tabular-nums"
-                style={{ color: "var(--text-secondary)" }}
-              >
-                {snapshot.gpu.temperatureC != null && (
-                  <span className="inline-flex items-center gap-0.5 text-emerald-500 font-medium">
-                    <Thermometer className="w-3 h-3" />
-                    {snapshot.gpu.temperatureC.toFixed(0)}°C
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="fluent-card p-4">
+              <div className="flex items-center justify-between gap-2 mb-3">
+                <h4 className="text-sm font-semibold truncate">
+                  Logische CPU-Kerne ({snapshot.cpu.logicalCores})
+                </h4>
+                <div
+                  className="text-xs tabular-nums flex items-center gap-2.5 shrink-0 whitespace-nowrap"
+                  style={{ color: "var(--text-muted)" }}
+                  title={
+                    snapshot.cpu.baseFrequencyMhz &&
+                    snapshot.cpu.baseFrequencyMhz > 0
+                      ? `Aktueller Effektivtakt (Basis: ${(snapshot.cpu.baseFrequencyMhz / 1000).toFixed(2)} GHz)`
+                      : undefined
+                  }
+                >
+                  <span
+                    className="font-semibold"
+                    style={{ color: "var(--accent-cpu)" }}
+                  >
+                    {(snapshot.cpu.frequencyMhz / 1000).toFixed(2)} GHz
                   </span>
-                )}
-                {snapshot.gpu.powerWatts != null && (
-                  <span className="inline-flex items-center gap-0.5 text-amber-500 font-medium">
-                    <Zap className="w-3 h-3" />
-                    {snapshot.gpu.powerWatts.toFixed(1)}W
-                  </span>
-                )}
+                  {snapshot.cpu.baseFrequencyMhz != null &&
+                    snapshot.cpu.baseFrequencyMhz > 0 && (
+                      <span className="text-[11px] opacity-75">
+                        Basis {(snapshot.cpu.baseFrequencyMhz / 1000).toFixed(2)}{" "}
+                        GHz
+                      </span>
+                    )}
+                </div>
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                {snapshot.cpu.perCore.map((val, idx) => {
+                  const coreMhz = snapshot.cpu.perCoreFrequencyMhz?.[idx];
+                  return (
+                    <div
+                      key={idx}
+                      className="p-2 rounded-xl border"
+                      style={{
+                        backgroundColor: "var(--bg-subtle)",
+                        borderColor: "var(--border-subtle)",
+                      }}
+                      title={
+                        coreMhz
+                          ? `Kern ${idx}: ${val.toFixed(0)}% • ${(coreMhz / 1000).toFixed(2)} GHz`
+                          : `Kern ${idx}: ${val.toFixed(0)}%`
+                      }
+                    >
+                      <div className="flex items-center justify-between text-[11px] tabular-nums mb-1 gap-1">
+                        <span style={{ color: "var(--text-muted)" }}>
+                          Kern {idx}
+                        </span>
+                        <span className="flex items-center gap-1.5">
+                          {coreMhz != null && coreMhz > 0 && (
+                            <span
+                              className="text-[10px]"
+                              style={{ color: "var(--text-muted)" }}
+                            >
+                              {(coreMhz / 1000).toFixed(1)}G
+                            </span>
+                          )}
+                          <span className="font-semibold">
+                            {val.toFixed(0)}%
+                          </span>
+                        </span>
+                      </div>
+                      <div
+                        className="h-1.5 rounded-full overflow-hidden"
+                        style={{ backgroundColor: "var(--bg-surface-solid)" }}
+                      >
+                        <div
+                          className="h-full w-full rounded-full origin-left transition-transform duration-300"
+                          style={{
+                            transform: `scaleX(${Math.min(1, Math.max(0.03, val / 100))})`,
+                            backgroundColor:
+                              val > 80
+                                ? "#ef4444"
+                                : val > 55
+                                  ? "#f97316"
+                                  : "var(--accent-cpu)",
+                          }}
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             </div>
 
-            <div
-              className="p-3 rounded-xl border"
-              style={{
-                backgroundColor: "var(--bg-subtle)",
-                borderColor: "var(--border-subtle)",
-              }}
-            >
-              <div
-                className="text-[11px] mb-1"
-                style={{ color: "var(--text-muted)" }}
-              >
-                Arbeitsspeicher
-              </div>
-              <div className="font-semibold tabular-nums">
-                {formatBytes(snapshot.memory.usedBytes)} /{" "}
-                {formatBytes(snapshot.memory.totalBytes)}
-              </div>
-              <div
-                className="text-[11px] mt-1 tabular-nums"
-                style={{ color: "var(--text-secondary)" }}
-              >
-                Swap: {formatBytes(snapshot.memory.swapUsedBytes)}
-              </div>
-            </div>
+            <div className="fluent-card p-4 flex flex-col gap-3">
+              <h4 className="text-sm font-semibold">Hardware & Sensoren</h4>
+              <div className="grid grid-cols-2 gap-2.5 text-xs">
+                <div
+                  className="p-3 rounded-xl border min-h-[96px] flex flex-col justify-between"
+                  style={{
+                    backgroundColor: "var(--bg-subtle)",
+                    borderColor: "var(--border-subtle)",
+                  }}
+                  title={
+                    snapshot.cpu.sensorSource
+                      ? `CPU-Sensoren via ${snapshot.cpu.sensorSource}`
+                      : "Realtakt via Windows PDH. Für CPU-Temperatur & Watt auf Desktop-Boards ohne ACPI/EMI wird laufendes HWiNFO (Shared Memory) oder LibreHardwareMonitor automatisch erkannt."
+                  }
+                >
+                  <div>
+                    <div
+                      className="text-[11px] mb-1"
+                      style={{ color: "var(--text-muted)" }}
+                    >
+                      Prozessor
+                    </div>
+                    <div
+                      className="font-semibold truncate"
+                      title={snapshot.cpu.brand}
+                    >
+                      {snapshot.cpu.brand}
+                    </div>
+                    <div
+                      className="text-[11px] mt-1 tabular-nums truncate"
+                      style={{ color: "var(--text-secondary)" }}
+                    >
+                      {snapshot.cpu.physicalCores} Kerne /{" "}
+                      {snapshot.cpu.logicalCores} Threads ·{" "}
+                      <span
+                        className="font-medium"
+                        style={{ color: "var(--accent-cpu)" }}
+                      >
+                        {(snapshot.cpu.frequencyMhz / 1000).toFixed(2)} GHz
+                      </span>
+                    </div>
+                  </div>
+                  <div
+                    className="text-[11px] mt-1.5 flex items-center gap-2 tabular-nums min-h-[16px]"
+                    style={{ color: "var(--text-secondary)" }}
+                  >
+                    {snapshot.cpu.temperatureC != null && (
+                      <span
+                        className={`inline-flex items-center gap-0.5 font-medium ${
+                          snapshot.cpu.temperatureC >= 85
+                            ? "text-red-500"
+                            : snapshot.cpu.temperatureC >= 70
+                              ? "text-amber-500"
+                              : "text-emerald-500"
+                        }`}
+                      >
+                        <Thermometer className="w-3 h-3" />
+                        {snapshot.cpu.temperatureC.toFixed(0)}°C
+                      </span>
+                    )}
+                    {snapshot.cpu.powerWatts != null && (
+                      <span className="inline-flex items-center gap-0.5 text-amber-500 font-medium">
+                        <Zap className="w-3 h-3" />
+                        {snapshot.cpu.powerWatts.toFixed(1)}W
+                      </span>
+                    )}
+                    {snapshot.cpu.temperatureC == null &&
+                      snapshot.cpu.powerWatts == null && (
+                        <span
+                          className="text-[10px] truncate"
+                          style={{ color: "var(--text-muted)" }}
+                        >
+                          Basis{" "}
+                          {(
+                            (snapshot.cpu.baseFrequencyMhz ??
+                              snapshot.cpu.frequencyMhz) / 1000
+                          ).toFixed(2)}{" "}
+                          GHz
+                        </span>
+                      )}
+                  </div>
+                </div>
 
-            <div
-              className="p-3 rounded-xl border"
-              style={{
-                backgroundColor: "var(--bg-subtle)",
-                borderColor: "var(--border-subtle)",
-              }}
-            >
-              <div
-                className="text-[11px] mb-1"
-                style={{ color: "var(--text-muted)" }}
-              >
-                Betriebssystem
-              </div>
-              <div className="font-semibold truncate">
-                {snapshot.system.osName}
-              </div>
-              <div
-                className="text-[11px] mt-1 truncate"
-                style={{ color: "var(--text-secondary)" }}
-              >
-                Host: {snapshot.system.hostname}
+                <div
+                  className="p-3 rounded-xl border min-h-[96px] flex flex-col justify-between"
+                  style={{
+                    backgroundColor: "var(--bg-subtle)",
+                    borderColor: "var(--border-subtle)",
+                  }}
+                >
+                  <div>
+                    <div
+                      className="text-[11px] mb-1"
+                      style={{ color: "var(--text-muted)" }}
+                    >
+                      Grafikkarte
+                    </div>
+                    <div
+                      className="font-semibold truncate"
+                      title={snapshot.gpu.name}
+                    >
+                      {snapshot.gpu.name}
+                    </div>
+                    <div
+                      className="text-[11px] mt-1 tabular-nums truncate"
+                      style={{ color: "var(--text-secondary)" }}
+                    >
+                      3D {(snapshot.gpu.engine3dPercent ?? 0).toFixed(0)}% ·
+                      VRAM {formatBytes(snapshot.gpu.vramUsedBytes)}
+                    </div>
+                  </div>
+                  <div
+                    className="text-[11px] mt-1.5 flex items-center gap-2 tabular-nums min-h-[16px]"
+                    style={{ color: "var(--text-secondary)" }}
+                  >
+                    {snapshot.gpu.temperatureC != null && (
+                      <span className="inline-flex items-center gap-0.5 text-emerald-500 font-medium">
+                        <Thermometer className="w-3 h-3" />
+                        {snapshot.gpu.temperatureC.toFixed(0)}°C
+                      </span>
+                    )}
+                    {snapshot.gpu.powerWatts != null && (
+                      <span className="inline-flex items-center gap-0.5 text-amber-500 font-medium">
+                        <Zap className="w-3 h-3" />
+                        {snapshot.gpu.powerWatts.toFixed(1)}W
+                      </span>
+                    )}
+                    {snapshot.gpu.clockMhz != null && (
+                      <span
+                        className="text-[10px]"
+                        style={{ color: "var(--text-muted)" }}
+                      >
+                        {snapshot.gpu.clockMhz} MHz
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                <div
+                  className="p-3 rounded-xl border min-h-[82px]"
+                  style={{
+                    backgroundColor: "var(--bg-subtle)",
+                    borderColor: "var(--border-subtle)",
+                  }}
+                >
+                  <div
+                    className="text-[11px] mb-1"
+                    style={{ color: "var(--text-muted)" }}
+                  >
+                    Arbeitsspeicher
+                  </div>
+                  <div className="font-semibold tabular-nums">
+                    {formatBytes(snapshot.memory.usedBytes)} /{" "}
+                    {formatBytes(snapshot.memory.totalBytes)}
+                  </div>
+                  <div
+                    className="text-[11px] mt-1 tabular-nums"
+                    style={{ color: "var(--text-secondary)" }}
+                  >
+                    Swap: {formatBytes(snapshot.memory.swapUsedBytes)}
+                  </div>
+                </div>
+
+                <div
+                  className="p-3 rounded-xl border min-h-[82px]"
+                  style={{
+                    backgroundColor: "var(--bg-subtle)",
+                    borderColor: "var(--border-subtle)",
+                  }}
+                >
+                  <div
+                    className="text-[11px] mb-1"
+                    style={{ color: "var(--text-muted)" }}
+                  >
+                    Betriebssystem
+                  </div>
+                  <div className="font-semibold truncate">
+                    {snapshot.system.osName}
+                  </div>
+                  <div
+                    className="text-[11px] mt-1 truncate"
+                    style={{ color: "var(--text-secondary)" }}
+                  >
+                    Host: {snapshot.system.hostname}
+                  </div>
+                </div>
               </div>
             </div>
-          </div>
-        </div>
+          </>
+        )}
       </div>
     </div>
   );

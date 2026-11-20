@@ -5,11 +5,19 @@ use serde::{Deserialize, Serialize};
 pub struct CpuMetrics {
     pub total_usage: f32,
     pub per_core: Vec<f32>,
+    #[serde(default)]
+    pub per_core_frequency_mhz: Vec<u64>,
     pub brand: String,
     pub frequency_mhz: u64,
+    #[serde(default)]
+    pub base_frequency_mhz: u64,
     pub physical_cores: usize,
     pub logical_cores: usize,
     pub temperature_c: Option<f32>,
+    #[serde(default)]
+    pub power_watts: Option<f32>,
+    #[serde(default)]
+    pub sensor_source: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -40,8 +48,34 @@ pub struct GpuMetrics {
     pub usage_percent: Option<f32>,
     pub vram_used_bytes: u64,
     pub vram_total_bytes: u64,
+    #[serde(default)]
+    pub shared_used_bytes: u64,
+    #[serde(default)]
+    pub shared_total_bytes: u64,
     pub temperature_c: Option<f32>,
     pub power_watts: Option<f32>,
+    #[serde(default)]
+    pub power_limit_watts: Option<f32>,
+    #[serde(default)]
+    pub clock_mhz: Option<u32>,
+    #[serde(default)]
+    pub memory_clock_mhz: Option<u32>,
+    #[serde(default)]
+    pub fan_speed_percent: Option<u32>,
+    #[serde(default)]
+    pub engine_3d_percent: f32,
+    #[serde(default)]
+    pub engine_copy_percent: f32,
+    #[serde(default)]
+    pub engine_video_encode_percent: f32,
+    #[serde(default)]
+    pub engine_video_decode_percent: f32,
+    #[serde(default)]
+    pub driver_version: Option<String>,
+    #[serde(default)]
+    pub driver_date: Option<String>,
+    #[serde(default)]
+    pub pci_location: Option<String>,
     pub available: bool,
 }
 
@@ -52,10 +86,24 @@ pub struct DiskDriveInfo {
     pub mount_point: String,
     pub file_system: String,
     pub kind: String,
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub bus_type: Option<String>,
+    #[serde(default)]
+    pub is_system_drive: bool,
     pub total_bytes: u64,
     pub available_bytes: u64,
     pub used_bytes: u64,
     pub usage_percent: f32,
+    #[serde(default)]
+    pub active_percent: f32,
+    #[serde(default)]
+    pub avg_response_ms: f32,
+    #[serde(default)]
+    pub read_bytes_per_sec: u64,
+    #[serde(default)]
+    pub write_bytes_per_sec: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -63,6 +111,10 @@ pub struct DiskDriveInfo {
 pub struct DiskMetrics {
     pub read_bytes_per_sec: u64,
     pub write_bytes_per_sec: u64,
+    #[serde(default)]
+    pub active_percent: f32,
+    #[serde(default)]
+    pub avg_response_ms: f32,
     pub drives: Vec<DiskDriveInfo>,
 }
 
@@ -163,7 +215,17 @@ pub struct HistoryPoint {
     pub ram_percent: f32,
     pub gpu_percent: f32,
     pub disk_mb_per_sec: f32,
+    #[serde(default)]
+    pub disk_active_percent: f32,
     pub net_kb_per_sec: f32,
+    #[serde(default)]
+    pub gpu_engine_3d: f32,
+    #[serde(default)]
+    pub gpu_engine_copy: f32,
+    #[serde(default)]
+    pub gpu_engine_encode: f32,
+    #[serde(default)]
+    pub gpu_engine_decode: f32,
     pub is_spike: bool,
     pub spike_reason: Option<String>,
     pub unaccounted_cpu_percent: f32,

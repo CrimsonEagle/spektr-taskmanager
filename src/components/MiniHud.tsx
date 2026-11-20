@@ -60,6 +60,19 @@ export const MiniHud: React.FC<MiniHudProps> = React.memo(
 
     const cpu = snapshot?.cpu.totalUsage ?? 0;
     const cpuGhz = snapshot ? (snapshot.cpu.frequencyMhz / 1000).toFixed(2) : "–";
+    const cpuSub = snapshot
+      ? [
+          `${cpuGhz} GHz`,
+          snapshot.cpu.temperatureC != null
+            ? `${snapshot.cpu.temperatureC.toFixed(0)}°C`
+            : null,
+          snapshot.cpu.powerWatts != null
+            ? `${snapshot.cpu.powerWatts.toFixed(0)}W`
+            : null,
+        ]
+          .filter(Boolean)
+          .join(" · ")
+      : "–";
     const ram = snapshot?.memory.usagePercent ?? 0;
     const ramSub = snapshot
       ? `${(snapshot.memory.usedBytes / 1073741824).toFixed(1)}/${(snapshot.memory.totalBytes / 1073741824).toFixed(0)} GB`
@@ -80,7 +93,7 @@ export const MiniHud: React.FC<MiniHudProps> = React.memo(
         key: "cpu",
         label: "CPU",
         value: cpu,
-        sub: `${cpuGhz} GHz`,
+        sub: cpuSub,
         color: "var(--accent-cpu)",
       },
       hudMetrics.ram && {

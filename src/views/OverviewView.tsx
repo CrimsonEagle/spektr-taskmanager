@@ -60,7 +60,10 @@ export const OverviewView: React.FC<OverviewViewProps> = React.memo(({
   const cpuSeries = useMemo(() => recent.map((h) => h.cpuPercent), [recent]);
   const ramSeries = useMemo(() => recent.map((h) => h.ramPercent), [recent]);
   const gpuSeries = useMemo(() => recent.map((h) => h.gpuPercent), [recent]);
-  const diskSeries = useMemo(() => recent.map((h) => h.diskMbPerSec), [recent]);
+  const diskSeries = useMemo(
+    () => recent.map((h) => h.diskActivePercent ?? h.diskMbPerSec),
+    [recent]
+  );
   const netSeries = useMemo(() => recent.map((h) => h.netKbPerSec), [recent]);
 
   const recentSpikes = useMemo(
@@ -161,11 +164,30 @@ export const OverviewView: React.FC<OverviewViewProps> = React.memo(({
                 {cpu.totalUsage.toFixed(0)}%
               </div>
               <div
-                className="text-[11px] tabular-nums mt-1"
+                className="text-[11px] tabular-nums mt-1 flex items-center justify-end gap-1.5 flex-wrap"
                 style={{ color: "var(--text-muted)" }}
+                title={[
+                  cpu.baseFrequencyMhz && cpu.baseFrequencyMhz > 0
+                    ? `Basistakt: ${(cpu.baseFrequencyMhz / 1000).toFixed(2)} GHz`
+                    : null,
+                  cpu.sensorSource ? `Sensoren: ${cpu.sensorSource}` : null,
+                ]
+                  .filter(Boolean)
+                  .join(" • ") || undefined}
               >
-                {(cpu.frequencyMhz / 1000).toFixed(2)} GHz
-                {cpu.temperatureC != null && ` • ${cpu.temperatureC.toFixed(0)}°C`}
+                <span>{(cpu.frequencyMhz / 1000).toFixed(2)} GHz</span>
+                {cpu.temperatureC != null && (
+                  <span className="inline-flex items-center gap-0.5">
+                    <Thermometer className="w-3 h-3" />
+                    {cpu.temperatureC.toFixed(0)}°C
+                  </span>
+                )}
+                {cpu.powerWatts != null && (
+                  <span className="inline-flex items-center gap-0.5">
+                    <Zap className="w-3 h-3" />
+                    {cpu.powerWatts.toFixed(0)}W
+                  </span>
+                )}
               </div>
             </div>
           </div>
@@ -393,7 +415,7 @@ export const OverviewView: React.FC<OverviewViewProps> = React.memo(({
 
           <div>
             <div className="flex items-center justify-between text-[11px] mb-1.5 tabular-nums">
-              <span style={{ color: "var(--text-muted)" }}>VRAM</span>
+              <span style={{ color: "var(--text-muted)" }}>Dedizierter VRAM</span>
               <span>
                 {gpu.vramTotalBytes > 0
                   ? `${formatBytes(gpu.vramUsedBytes)} / ${formatBytes(gpu.vramTotalBytes)}`
@@ -411,6 +433,22 @@ export const OverviewView: React.FC<OverviewViewProps> = React.memo(({
                   backgroundColor: "var(--accent-gpu)",
                 }}
               />
+            </div>
+            <div
+              className="flex items-center justify-between gap-2 text-[10px] mt-1.5 tabular-nums"
+              style={{ color: "var(--text-muted)" }}
+            >
+              <span>
+                3D {(gpu.engine3dPercent ?? 0).toFixed(0)}% · Dec{" "}
+                {(gpu.engineVideoDecodePercent ?? 0).toFixed(0)}% · Enc{" "}
+                {(gpu.engineVideoEncodePercent ?? 0).toFixed(0)}%
+              </span>
+              {(gpu.sharedTotalBytes ?? 0) > 0 && (
+                <span className="truncate">
+                  Geteilt: {formatBytes(gpu.sharedUsedBytes ?? 0)} /{" "}
+                  {formatBytes(gpu.sharedTotalBytes ?? 0)}
+                </span>
+              )}
             </div>
           </div>
         </motion.div>
@@ -443,6 +481,21 @@ export const OverviewView: React.FC<OverviewViewProps> = React.memo(({
                 </div>
               </div>
             </div>
+            <div className="text-right shrink-0">
+              <div
+                className="text-2xl font-bold tabular-nums leading-none"
+                style={{ color: "var(--accent-disk)" }}
+              >
+                {(disk.activePercent ?? 0).toFixed(0)}%
+              </div>
+              <div
+                className="text-[11px] tabular-nums mt-1"
+                style={{ color: "var(--text-muted)" }}
+                title="Durchschnittliche Antwortzeit"
+              >
+                {(disk.avgResponseMs ?? 0).toFixed(1)} ms
+              </div>
+            </div>
           </div>
 
           <Sparkline
@@ -450,17 +503,30 @@ export const OverviewView: React.FC<OverviewViewProps> = React.memo(({
             color="var(--accent-disk)"
             width={300}
             height={34}
+            maxValue={100}
             className="w-full block"
           />
 
           <div className="flex flex-col gap-2">
             {disk.drives.slice(0, 3).map((d) => (
               <div key={d.mountPoint} className="flex flex-col gap-1">
-                <div className="flex items-center justify-between text-[11px] tabular-nums">
-                  <span className="font-medium truncate">
-                    {d.mountPoint} {d.name ? `(${d.name})` : ""}
+                <div className="flex items-center justify-between gap-2 text-[11px] tabular-nums">
+                  <span
+                    className="font-medium truncate"
+                    title={d.model ?? undefined}
+                  >
+                    {d.mountPoint}{" "}
+                    {d.busType ? `(${d.busType})` : d.name ? `(${d.name})` : ""}
+                    {(d.activePercent ?? 0) >= 1 && (
+                      <span
+                        className="ml-1.5 text-[10px] font-semibold"
+                        style={{ color: "var(--accent-disk)" }}
+                      >
+                        {(d.activePercent ?? 0).toFixed(0)}%
+                      </span>
+                    )}
                   </span>
-                  <span style={{ color: "var(--text-muted)" }}>
+                  <span className="shrink-0" style={{ color: "var(--text-muted)" }}>
                     {formatBytes(d.availableBytes)} frei / {formatBytes(d.totalBytes)}
                   </span>
                 </div>

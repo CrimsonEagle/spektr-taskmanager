@@ -1,3 +1,5 @@
+mod cpu_sensors;
+mod disk_sensors;
 mod file_lock;
 mod gpu;
 mod icons;

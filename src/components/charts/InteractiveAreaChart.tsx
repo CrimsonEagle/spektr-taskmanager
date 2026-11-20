@@ -114,20 +114,23 @@ export const InteractiveAreaChart: React.FC<InteractiveAreaChartProps> =
       const [hoverIdx, setHoverIdx] = useState<number | null>(null);
       const [dragAnchorIdx, setDragAnchorIdx] = useState<number | null>(null);
       const [dragCurrentIdx, setDragCurrentIdx] = useState<number | null>(null);
+      const [chartWidth, setChartWidth] = useState<number>(920);
 
-      const width = 920;
+      const width = chartWidth;
       const padLeft = 44;
       const padRight = 14;
       const padTop = 16;
       const padBottom = 26;
-      const plotW = width - padLeft - padRight;
-      const plotH = height - padTop - padBottom;
+      const plotW = Math.max(100, width - padLeft - padRight);
+      const plotH = Math.max(60, height - padTop - padBottom);
 
       const updateCachedRect = useCallback(() => {
         if (!svgRef.current) return;
         const rect = svgRef.current.getBoundingClientRect();
         if (rect.width > 0) {
           cachedRectRef.current = { left: rect.left, width: rect.width };
+          const nextW = Math.max(320, Math.round(rect.width));
+          setChartWidth((prev) => (Math.abs(prev - nextW) >= 2 ? nextW : prev));
         }
       }, []);
 
@@ -232,7 +235,7 @@ export const InteractiveAreaChart: React.FC<InteractiveAreaChartProps> =
           const idx = Math.round(ratio * (entries.length - 1));
           return Math.max(0, Math.min(entries.length - 1, idx));
         },
-        [entries.length, plotW]
+        [entries.length, plotW, width]
       );
 
       // Finish drag cleanly even if mouse is released outside SVG
@@ -420,11 +423,15 @@ export const InteractiveAreaChart: React.FC<InteractiveAreaChartProps> =
       }, [selectionBand, hoverPoint, hoverCoord, entries, coords, unit]);
 
       return (
-        <div className="relative w-full select-none">
+        <div
+          className="relative w-full select-none shrink-0"
+          style={{ height: `${height}px` }}
+        >
           <svg
             ref={svgRef}
             viewBox={`0 0 ${width} ${height}`}
-            className="w-full h-auto cursor-crosshair block"
+            className="w-full cursor-crosshair block"
+            style={{ height: `${height}px` }}
             onMouseEnter={handleMouseEnter}
             onMouseDown={handleMouseDown}
             onMouseMove={handleMouseMove}
@@ -638,7 +645,7 @@ export const InteractiveAreaChart: React.FC<InteractiveAreaChartProps> =
           {/* Floating readout pill */}
           {pillInfo && (
             <div
-              className="pointer-events-none absolute top-2 right-3 px-2.5 py-1 rounded-lg text-xs font-medium tabular-nums flex items-center gap-2 border"
+              className="pointer-events-none absolute top-2 right-3 px-2.5 py-1 rounded-lg text-xs font-medium tabular-nums flex items-center gap-2 border whitespace-nowrap"
               style={{
                 backgroundColor: "var(--bg-drawer)",
                 borderColor: "var(--border-strong)",

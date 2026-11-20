@@ -1,3 +1,5 @@
+use crate::cpu_sensors::CpuSensorCollector;
+use crate::disk_sensors::{normalize_drive_key, DiskSensorCollector};
 use crate::gpu::GpuCollector;
 use crate::models::{
     BatteryMetrics, BlameProcess, CpuMetrics, DiskDriveInfo, DiskMetrics, HistoryPoint,
@@ -39,6 +41,8 @@ pub struct TelemetryEngine {
     networks: Networks,
     components: Components,
     has_temp_sensors: bool,
+    cpu_sensors: CpuSensorCollector,
+    disk_sensors: DiskSensorCollector,
     gpu: GpuCollector,
     win_cpu: WinCpuSampler,
     history: VecDeque<HistoryPoint>,
@@ -74,6 +78,8 @@ impl TelemetryEngine {
             (l.contains("cpu") || l.contains("package") || l.contains("core"))
                 && c.temperature().is_some()
         });
+        let cpu_sensors = CpuSensorCollector::new();
+        let disk_sensors = DiskSensorCollector::new();
         let gpu = GpuCollector::new();
         let win_cpu = WinCpuSampler::new();
 
@@ -94,6 +100,8 @@ impl TelemetryEngine {
             networks,
             components,
             has_temp_sensors,
+            cpu_sensors,
+            disk_sensors,
             gpu,
             win_cpu,
             history: VecDeque::with_capacity(MAX_HISTORY_POINTS + 1),
@@ -296,9 +304,13 @@ impl TelemetryEngine {
             .map(|c| c.cpu_usage().clamp(0.0, 100.0))
             .collect();
         let brand = self.cached_cpu_brand.clone();
-        let frequency_mhz = cpus.first().map(|c| c.frequency()).unwrap_or(0);
+        let fallback_base_mhz = cpus.first().map(|c| c.frequency()).unwrap_or(0);
+        let cpu_sensor = self.cpu_sensors.sample(fallback_base_mhz, logical_cores);
+        let base_frequency_mhz = cpu_sensor.base_freq_mhz.unwrap_or(fallback_base_mhz);
+        let frequency_mhz = cpu_sensor.effective_freq_mhz.unwrap_or(base_frequency_mhz);
+        let per_core_frequency_mhz = cpu_sensor.per_core_freq_mhz;
 
-        let cpu_temp = if self.has_temp_sensors {
+        let sysinfo_temp = if self.has_temp_sensors {
             self.components
                 .iter()
                 .find(|c| {
@@ -309,15 +321,28 @@ impl TelemetryEngine {
         } else {
             None
         };
+        let cpu_temp = cpu_sensor.temperature_c.or(sysinfo_temp);
+        let cpu_power = cpu_sensor.power_watts;
+        let sensor_source = cpu_sensor.sensor_source.or_else(|| {
+            if sysinfo_temp.is_some() {
+                Some("ACPI".to_string())
+            } else {
+                None
+            }
+        });
 
         let cpu_metrics = CpuMetrics {
             total_usage: total_cpu,
             per_core,
+            per_core_frequency_mhz,
             brand,
             frequency_mhz,
+            base_frequency_mhz,
             physical_cores,
             logical_cores,
             temperature_c: cpu_temp,
+            power_watts: cpu_power,
+            sensor_source,
         };
 
         // Memory (with real Commit / Kernel Pool / System Cache via K32GetPerformanceInfo)
@@ -490,7 +515,8 @@ impl TelemetryEngine {
             }
         }
 
-        // Disks
+        // Disks (enhanced with Windows PDH Active Time %, Response Time ms, per-drive R/W & NVMe/SATA hardware info)
+        let disk_snap = self.disk_sensors.sample();
         let mut drives = Vec::new();
         for d in self.disks.list() {
             let total = d.total_space();
@@ -501,21 +527,42 @@ impl TelemetryEngine {
             } else {
                 0.0
             };
+            let mount_point = d.mount_point().to_string_lossy().to_string();
+            let drive_key = normalize_drive_key(&mount_point);
+            let hw = self.disk_sensors.get_drive_hardware(&mount_point);
+            let pdh_drive = disk_snap.per_drive.get(&drive_key);
+
             drives.push(DiskDriveInfo {
                 name: d.name().to_string_lossy().to_string(),
-                mount_point: d.mount_point().to_string_lossy().to_string(),
+                mount_point,
                 file_system: d.file_system().to_string_lossy().to_string(),
                 kind: format!("{:?}", d.kind()),
+                model: hw.model,
+                bus_type: hw.bus_type,
+                is_system_drive: hw.is_system_drive,
                 total_bytes: total,
                 available_bytes: avail,
                 used_bytes: used,
                 usage_percent: pct.clamp(0.0, 100.0),
+                active_percent: pdh_drive.map_or(0.0, |p| p.active_percent),
+                avg_response_ms: pdh_drive.map_or(0.0, |p| p.avg_response_ms),
+                read_bytes_per_sec: pdh_drive.map_or(0, |p| p.read_bytes_per_sec),
+                write_bytes_per_sec: pdh_drive.map_or(0, |p| p.write_bytes_per_sec),
             });
         }
 
+        let final_disk_read = disk_snap
+            .total_read_bytes_per_sec
+            .unwrap_or(total_disk_read);
+        let final_disk_write = disk_snap
+            .total_write_bytes_per_sec
+            .unwrap_or(total_disk_write);
+
         let disk_metrics = DiskMetrics {
-            read_bytes_per_sec: total_disk_read,
-            write_bytes_per_sec: total_disk_write,
+            read_bytes_per_sec: final_disk_read,
+            write_bytes_per_sec: final_disk_write,
+            active_percent: disk_snap.total_active_percent,
+            avg_response_ms: disk_snap.total_avg_response_ms,
             drives,
         };
 
@@ -693,7 +740,9 @@ impl TelemetryEngine {
         };
 
         let gpu_pct = gpu_metrics.usage_percent.unwrap_or(0.0);
-        let disk_mb = (total_disk_read + total_disk_write) as f32 / (1024.0 * 1024.0);
+        let disk_mb = (disk_metrics.read_bytes_per_sec + disk_metrics.write_bytes_per_sec) as f32
+            / (1024.0 * 1024.0);
+        let disk_active = disk_metrics.active_percent;
         let net_kb = (total_rx_sec + total_tx_sec) as f32 / 1024.0;
 
         let mut is_spike = false;
@@ -736,7 +785,12 @@ impl TelemetryEngine {
             ram_percent: (ram_percent * 10.0).round() / 10.0,
             gpu_percent: (gpu_pct * 10.0).round() / 10.0,
             disk_mb_per_sec: (disk_mb * 10.0).round() / 10.0,
+            disk_active_percent: (disk_active * 10.0).round() / 10.0,
             net_kb_per_sec: (net_kb * 10.0).round() / 10.0,
+            gpu_engine_3d: gpu_metrics.engine_3d_percent,
+            gpu_engine_copy: gpu_metrics.engine_copy_percent,
+            gpu_engine_encode: gpu_metrics.engine_video_encode_percent,
+            gpu_engine_decode: gpu_metrics.engine_video_decode_percent,
             is_spike,
             spike_reason,
             unaccounted_cpu_percent: unaccounted_cpu,

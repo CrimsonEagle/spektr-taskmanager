@@ -124,6 +124,10 @@ body,
   font-variant-numeric: tabular-nums;
 }
 
+.stable-scroll {
+  scrollbar-gutter: stable;
+}
+
 /* Custom sleek scrollbars */
 ::-webkit-scrollbar {
   width: 8px;

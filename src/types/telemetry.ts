@@ -1,11 +1,15 @@
 export interface CpuMetrics {
   totalUsage: number;
   perCore: number[];
+  perCoreFrequencyMhz?: number[];
   brand: string;
   frequencyMhz: number;
+  baseFrequencyMhz?: number;
   physicalCores: number;
   logicalCores: number;
   temperatureC: number | null;
+  powerWatts?: number | null;
+  sensorSource?: string | null;
 }
 
 export interface MemoryMetrics {
@@ -28,8 +32,21 @@ export interface GpuMetrics {
   usagePercent: number | null;
   vramUsedBytes: number;
   vramTotalBytes: number;
+  sharedUsedBytes?: number;
+  sharedTotalBytes?: number;
   temperatureC: number | null;
   powerWatts: number | null;
+  powerLimitWatts?: number | null;
+  clockMhz?: number | null;
+  memoryClockMhz?: number | null;
+  fanSpeedPercent?: number | null;
+  engine3dPercent?: number;
+  engineCopyPercent?: number;
+  engineVideoEncodePercent?: number;
+  engineVideoDecodePercent?: number;
+  driverVersion?: string | null;
+  driverDate?: string | null;
+  pciLocation?: string | null;
   available: boolean;
 }
 
@@ -38,15 +55,24 @@ export interface DiskDriveInfo {
   mountPoint: string;
   fileSystem: string;
   kind: string;
+  model?: string | null;
+  busType?: string | null;
+  isSystemDrive?: boolean;
   totalBytes: number;
   availableBytes: number;
   usedBytes: number;
   usagePercent: number;
+  activePercent?: number;
+  avgResponseMs?: number;
+  readBytesPerSec?: number;
+  writeBytesPerSec?: number;
 }
 
 export interface DiskMetrics {
   readBytesPerSec: number;
   writeBytesPerSec: number;
+  activePercent?: number;
+  avgResponseMs?: number;
   drives: DiskDriveInfo[];
 }
 
@@ -140,7 +166,12 @@ export interface HistoryPoint {
   ramPercent: number;
   gpuPercent: number;
   diskMbPerSec: number;
+  diskActivePercent?: number;
   netKbPerSec: number;
+  gpuEngine3d?: number;
+  gpuEngineCopy?: number;
+  gpuEngineEncode?: number;
+  gpuEngineDecode?: number;
   isSpike: boolean;
   spikeReason: string | null;
   unaccountedCpuPercent: number;

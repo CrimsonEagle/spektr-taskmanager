@@ -466,7 +466,7 @@ export function App() {
         />
 
         {/* Main Content Viewport */}
-        <main className="flex-1 overflow-y-auto p-5 min-w-0">
+        <main className="flex-1 overflow-y-auto stable-scroll p-5 min-w-0">
           {!snapshot ? (
             <div className="h-full flex flex-col items-center justify-center gap-3">
               <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-sky-500 via-indigo-500 to-violet-500 text-white flex items-center justify-center animate-pulse">
