@@ -25,16 +25,19 @@ import {
   getCategoryMeta,
 } from "../lib/format";
 import {
+  BlameProcess,
   HistoryPoint,
   NavTab,
+  PerformanceMetric,
   TelemetrySnapshot,
 } from "../types/telemetry";
 
 interface OverviewViewProps {
   snapshot: TelemetrySnapshot;
   history: HistoryPoint[];
-  onInspectPid: (pid: number) => void;
+  onInspectPid: (pid: number, fallback?: BlameProcess) => void;
   onNavigate: (tab: NavTab) => void;
+  onOpenPerformanceMetric: (metric: PerformanceMetric) => void;
   onJumpToSpike: (timestampMs: number) => void;
   onRestartExplorer: () => void;
 }
@@ -44,11 +47,12 @@ const cardAnim = {
   show: { opacity: 1, y: 0 },
 };
 
-export const OverviewView: React.FC<OverviewViewProps> = ({
+export const OverviewView: React.FC<OverviewViewProps> = React.memo(({
   snapshot,
   history,
   onInspectPid,
   onNavigate,
+  onOpenPerformanceMetric,
   onJumpToSpike,
   onRestartExplorer,
 }) => {
@@ -124,8 +128,8 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
         {/* CPU Card */}
         <motion.div
           variants={cardAnim}
-          onClick={() => onNavigate("performance")}
-          className="fluent-card p-4 flex flex-col justify-between gap-3 cursor-pointer"
+          onClick={() => onOpenPerformanceMetric("cpu")}
+          className="fluent-card p-4 flex flex-col justify-between gap-3 cursor-pointer overflow-hidden min-w-0"
         >
           <div className="flex items-start justify-between gap-2">
             <div className="flex items-center gap-2.5 min-w-0">
@@ -214,8 +218,8 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
         {/* RAM Card */}
         <motion.div
           variants={cardAnim}
-          onClick={() => onNavigate("performance")}
-          className="fluent-card p-4 flex flex-col justify-between gap-3 cursor-pointer"
+          onClick={() => onOpenPerformanceMetric("memory")}
+          className="fluent-card p-4 flex flex-col justify-between gap-3 cursor-pointer overflow-hidden min-w-0"
         >
           <div className="flex items-start justify-between gap-2">
             <div className="flex items-center gap-2.5">
@@ -267,24 +271,23 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
           {/* Segmented RAM Bar */}
           <div>
             <div
-              className="h-2.5 w-full rounded-full overflow-hidden flex"
+              className="relative h-2.5 w-full rounded-full overflow-hidden"
               style={{ backgroundColor: "var(--bg-subtle)" }}
+              title={`Aktiv: ${formatBytes(memory.usedBytes)} • Standby/Cache: ${formatBytes(memory.cachedBytes)}`}
             >
               <div
-                className="h-full transition-all duration-500"
+                className="absolute inset-0 rounded-full origin-left transition-transform duration-500 opacity-40"
                 style={{
-                  width: `${memory.usagePercent}%`,
+                  transform: `scaleX(${Math.min(1, Math.max(0, (memory.usagePercent + cachedPct) / 100))})`,
                   backgroundColor: "var(--accent-ram)",
                 }}
-                title={`Aktiv: ${formatBytes(memory.usedBytes)}`}
               />
               <div
-                className="h-full transition-all duration-500 opacity-40"
+                className="absolute inset-0 rounded-full origin-left transition-transform duration-500"
                 style={{
-                  width: `${Math.min(100 - memory.usagePercent, cachedPct)}%`,
+                  transform: `scaleX(${Math.min(1, Math.max(0, memory.usagePercent / 100))})`,
                   backgroundColor: "var(--accent-ram)",
                 }}
-                title={`Standby/Cache: ${formatBytes(memory.cachedBytes)}`}
               />
             </div>
             <div
@@ -296,14 +299,38 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
                 {formatBytes(memory.swapUsedBytes)} / {formatBytes(memory.swapTotalBytes)}
               </span>
             </div>
+            {((memory.commitTotalBytes ?? 0) > 0 ||
+              (memory.pagedPoolBytes ?? 0) > 0 ||
+              (memory.nonPagedPoolBytes ?? 0) > 0) && (
+              <div
+                className="flex items-center justify-between gap-2 text-[10px] mt-1 tabular-nums flex-wrap"
+                style={{ color: "var(--text-muted)" }}
+              >
+                {(memory.commitTotalBytes ?? 0) > 0 && (
+                  <span>
+                    Commit: {formatBytes(memory.commitTotalBytes ?? 0)}
+                    {(memory.commitLimitBytes ?? 0) > 0
+                      ? ` / ${formatBytes(memory.commitLimitBytes ?? 0)}`
+                      : ""}
+                  </span>
+                )}
+                {((memory.pagedPoolBytes ?? 0) > 0 ||
+                  (memory.nonPagedPoolBytes ?? 0) > 0) && (
+                  <span>
+                    Pool: {formatBytes(memory.pagedPoolBytes ?? 0)} P /{" "}
+                    {formatBytes(memory.nonPagedPoolBytes ?? 0)} NP
+                  </span>
+                )}
+              </div>
+            )}
           </div>
         </motion.div>
 
         {/* GPU Card */}
         <motion.div
           variants={cardAnim}
-          onClick={() => onNavigate("performance")}
-          className="fluent-card p-4 flex flex-col justify-between gap-3 cursor-pointer"
+          onClick={() => onOpenPerformanceMetric("gpu")}
+          className="fluent-card p-4 flex flex-col justify-between gap-3 cursor-pointer overflow-hidden min-w-0"
         >
           <div className="flex items-start justify-between gap-2">
             <div className="flex items-center gap-2.5 min-w-0">
@@ -378,9 +405,9 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
               style={{ backgroundColor: "var(--bg-subtle)" }}
             >
               <div
-                className="h-full rounded-full transition-all duration-500"
+                className="h-full w-full rounded-full origin-left transition-transform duration-500"
                 style={{
-                  width: `${Math.min(100, vramPct)}%`,
+                  transform: `scaleX(${Math.min(1, Math.max(0, vramPct / 100))})`,
                   backgroundColor: "var(--accent-gpu)",
                 }}
               />
@@ -391,10 +418,11 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
         {/* Disk Card */}
         <motion.div
           variants={cardAnim}
-          className="fluent-card p-4 flex flex-col justify-between gap-3"
+          onClick={() => onOpenPerformanceMetric("disk")}
+          className="fluent-card p-4 flex flex-col justify-between gap-3 cursor-pointer overflow-hidden min-w-0"
         >
-          <div className="flex items-start justify-between gap-2">
-            <div className="flex items-center gap-2.5">
+          <div className="flex items-start justify-between gap-2 min-w-0">
+            <div className="flex items-center gap-2.5 min-w-0">
               <div
                 className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0"
                 style={{
@@ -404,10 +432,10 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
               >
                 <HardDrive className="w-4.5 h-4.5" />
               </div>
-              <div>
-                <div className="text-xs font-semibold">Datenträger</div>
+              <div className="min-w-0">
+                <div className="text-xs font-semibold truncate">Datenträger</div>
                 <div
-                  className="text-[11px] tabular-nums"
+                  className="text-[11px] tabular-nums truncate"
                   style={{ color: "var(--text-muted)" }}
                 >
                   R: {formatSpeed(disk.readBytesPerSec)} • W:{" "}
@@ -415,13 +443,15 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
                 </div>
               </div>
             </div>
-            <Sparkline
-              data={diskSeries}
-              color="var(--accent-disk)"
-              width={86}
-              height={32}
-            />
           </div>
+
+          <Sparkline
+            data={diskSeries}
+            color="var(--accent-disk)"
+            width={300}
+            height={34}
+            className="w-full block"
+          />
 
           <div className="flex flex-col gap-2">
             {disk.drives.slice(0, 3).map((d) => (
@@ -457,10 +487,10 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
         {/* Network Card */}
         <motion.div
           variants={cardAnim}
-          onClick={() => onNavigate("network")}
-          className="fluent-card p-4 flex flex-col justify-between gap-3 cursor-pointer"
+          onClick={() => onOpenPerformanceMetric("network")}
+          className="fluent-card p-4 flex flex-col justify-between gap-3 cursor-pointer overflow-hidden min-w-0"
         >
-          <div className="flex items-start justify-between gap-2">
+          <div className="flex items-start justify-between gap-2 min-w-0">
             <div className="flex items-center gap-2.5 min-w-0">
               <div
                 className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0"
@@ -472,7 +502,7 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
                 <Wifi className="w-4.5 h-4.5" />
               </div>
               <div className="min-w-0">
-                <div className="text-xs font-semibold">Netzwerk</div>
+                <div className="text-xs font-semibold truncate">Netzwerk</div>
                 <div
                   className="text-[11px] truncate"
                   style={{ color: "var(--text-muted)" }}
@@ -481,13 +511,15 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
                 </div>
               </div>
             </div>
-            <Sparkline
-              data={netSeries}
-              color="var(--accent-net)"
-              width={86}
-              height={32}
-            />
           </div>
+
+          <Sparkline
+            data={netSeries}
+            color="var(--accent-net)"
+            width={300}
+            height={34}
+            className="w-full block"
+          />
 
           <div className="grid grid-cols-2 gap-2.5 tabular-nums">
             <div
@@ -536,7 +568,16 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
             className="flex items-center justify-between text-[11px] tabular-nums"
             style={{ color: "var(--text-muted)" }}
           >
-            <span>Offene Ports: {system.listeningPortsCount}</span>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onNavigate("network");
+              }}
+              className="hover:underline cursor-pointer"
+              style={{ color: "var(--accent-net)" }}
+            >
+              Offene Ports: {system.listeningPortsCount} →
+            </button>
             <span>Sitzung: ↓ {formatBytes(network.totalRxBytes)}</span>
           </div>
         </motion.div>
@@ -544,19 +585,20 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
         {/* System / Battery & Quick Actions Card */}
         <motion.div
           variants={cardAnim}
-          className="fluent-card p-4 flex flex-col justify-between gap-3"
+          onClick={() => onNavigate("processes")}
+          className="fluent-card p-4 flex flex-col justify-between gap-3 cursor-pointer overflow-hidden min-w-0"
         >
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2.5">
-              <div className="w-9 h-9 rounded-xl flex items-center justify-center bg-indigo-500/15 text-indigo-500">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <div className="w-9 h-9 rounded-xl flex items-center justify-center bg-indigo-500/15 text-indigo-500 shrink-0">
                 <BatteryCharging className="w-4.5 h-4.5" />
               </div>
-              <div>
-                <div className="text-xs font-semibold">
+              <div className="min-w-0">
+                <div className="text-xs font-semibold truncate">
                   {battery.hasBattery ? "Akku & System" : "System & Schnellzugriff"}
                 </div>
                 <div
-                  className="text-[11px]"
+                  className="text-[11px] truncate"
                   style={{ color: "var(--text-muted)" }}
                 >
                   {battery.hasBattery
@@ -569,7 +611,10 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
 
           <div className="grid grid-cols-1 gap-1.5">
             <button
-              onClick={() => onNavigate("network")}
+              onClick={(e) => {
+                e.stopPropagation();
+                onNavigate("network");
+              }}
               className="flex items-center justify-between px-3 py-2 rounded-xl text-xs font-medium border cursor-pointer transition-colors hover:bg-[var(--bg-surface-hover)]"
               style={{
                 backgroundColor: "var(--bg-subtle)",
@@ -589,7 +634,10 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
             </button>
 
             <button
-              onClick={() => onNavigate("tools")}
+              onClick={(e) => {
+                e.stopPropagation();
+                onNavigate("tools");
+              }}
               className="flex items-center justify-between px-3 py-2 rounded-xl text-xs font-medium border cursor-pointer transition-colors hover:bg-[var(--bg-surface-hover)]"
               style={{
                 backgroundColor: "var(--bg-subtle)",
@@ -604,7 +652,10 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
             </button>
 
             <button
-              onClick={onRestartExplorer}
+              onClick={(e) => {
+                e.stopPropagation();
+                onRestartExplorer();
+              }}
               className="flex items-center justify-between px-3 py-2 rounded-xl text-xs font-medium border cursor-pointer transition-colors hover:bg-[var(--bg-surface-hover)]"
               style={{
                 backgroundColor: "var(--bg-subtle)",
@@ -647,7 +698,7 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
               return (
                 <button
                   key={p.pid}
-                  onClick={() => onInspectPid(p.pid)}
+                  onClick={() => onInspectPid(p.pid, p)}
                   className="flex items-center justify-between gap-3 p-2 rounded-xl transition-colors hover:bg-[var(--bg-surface-hover)] cursor-pointer text-left"
                 >
                   <div className="flex items-center gap-2.5 min-w-0">
@@ -673,9 +724,9 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
                       style={{ backgroundColor: "var(--bg-subtle)" }}
                     >
                       <div
-                        className="h-full rounded-full transition-all duration-300"
+                        className="h-full w-full rounded-full origin-left transition-transform duration-300"
                         style={{
-                          width: `${Math.min(100, Math.max(4, p.cpuPercent))}%`,
+                          transform: `scaleX(${Math.min(1, Math.max(0.04, p.cpuPercent / 100))})`,
                           backgroundColor: "var(--accent-cpu)",
                         }}
                       />
@@ -721,7 +772,7 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
               return (
                 <button
                   key={p.pid}
-                  onClick={() => onInspectPid(p.pid)}
+                  onClick={() => onInspectPid(p.pid, p)}
                   className="flex items-center justify-between gap-3 p-2 rounded-xl transition-colors hover:bg-[var(--bg-surface-hover)] cursor-pointer text-left"
                 >
                   <div className="flex items-center gap-2.5 min-w-0">
@@ -747,9 +798,9 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
                       style={{ backgroundColor: "var(--bg-subtle)" }}
                     >
                       <div
-                        className="h-full rounded-full transition-all duration-300"
+                        className="h-full w-full rounded-full origin-left transition-transform duration-300"
                         style={{
-                          width: `${Math.min(100, Math.max(4, pct * 2.5))}%`,
+                          transform: `scaleX(${Math.min(1, Math.max(0.04, (pct * 2.5) / 100))})`,
                           backgroundColor: "var(--accent-ram)",
                         }}
                       />
@@ -769,4 +820,6 @@ export const OverviewView: React.FC<OverviewViewProps> = ({
       </div>
     </motion.div>
   );
-};
+});
+
+OverviewView.displayName = "OverviewView";

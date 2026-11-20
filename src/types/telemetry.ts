@@ -16,6 +16,10 @@ export interface MemoryMetrics {
   usagePercent: number;
   swapUsedBytes: number;
   swapTotalBytes: number;
+  commitTotalBytes?: number;
+  commitLimitBytes?: number;
+  pagedPoolBytes?: number;
+  nonPagedPoolBytes?: number;
 }
 
 export interface GpuMetrics {
@@ -193,6 +197,7 @@ export interface ServiceEntry {
   displayName: string;
   status: string;
   pid: number | null;
+  startType?: string;
 }
 
 export interface FileLockEntry {
@@ -209,11 +214,82 @@ export interface ActionResult {
 }
 
 export type NavTab = "overview" | "processes" | "performance" | "network" | "tools";
+export type PerformanceMetric = "cpu" | "memory" | "gpu" | "disk" | "network";
 export type ThemePreference = "system" | "light" | "dark";
 export type ResolvedTheme = "light" | "dark";
 
 export interface ToastMessage {
   id: string;
   text: string;
-  kind: "success" | "error" | "info";
+  kind: "success" | "error" | "info" | "warning";
+}
+
+export interface CpuCoreInfo {
+  index: number;
+  coreId: number;
+  efficiencyClass: number;
+  isPCore: boolean;
+}
+
+export interface ProcessAffinityInfo {
+  pid: number;
+  processMask: number;
+  systemMask: number;
+  cores: CpuCoreInfo[];
+  hasHybridCores: boolean;
+}
+
+export interface ProcessSecurityInfo {
+  exePath: string;
+  sha256: string;
+  fileSize: number;
+  companyName?: string | null;
+  fileDescription?: string | null;
+  fileVersion?: string | null;
+  signed: boolean;
+  signatureStatus: string;
+  virustotalUrl: string;
+}
+
+export interface ProcessModuleEntry {
+  name: string;
+  path: string;
+  sizeBytes: number;
+}
+
+export interface ProcessThreadEntry {
+  tid: number;
+  basePriority: number;
+}
+
+export interface ProcessModulesThreads {
+  modules: ProcessModuleEntry[];
+  threads: ProcessThreadEntry[];
+  totalModules: number;
+  totalThreads: number;
+}
+
+export interface ProcessEnvInfo {
+  cwd?: string | null;
+  envVars: [string, string][];
+  truncated: boolean;
+}
+
+export interface ProcessRule {
+  id: string;
+  processName: string;
+  enabled: boolean;
+  priority?: string | null;
+  ecoMode?: boolean | null;
+  affinityMask?: number | null;
+  alertCpuPct?: number | null;
+  alertRamMb?: number | null;
+}
+
+export interface RuleAlertEvent {
+  ruleId: string;
+  processName: string;
+  pid: number;
+  message: string;
+  timestamp: number;
 }

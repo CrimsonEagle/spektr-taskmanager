@@ -24,6 +24,14 @@ struct PrevProcState {
     write_bytes: u64,
 }
 
+#[cfg(windows)]
+type NtQuerySystemInformationFn = unsafe extern "system" fn(
+    system_information_class: u32,
+    system_information: *mut std::ffi::c_void,
+    system_information_length: u32,
+    return_length: *mut u32,
+) -> i32;
+
 pub struct WinCpuSampler {
     prev_sys_idle: u64,
     prev_sys_kernel: u64,
@@ -31,10 +39,17 @@ pub struct WinCpuSampler {
     prev_wall_filetime: u64,
     prev_procs: HashMap<u32, PrevProcState>,
     initialized: bool,
+    #[cfg(windows)]
+    nt_query: Option<NtQuerySystemInformationFn>,
+    #[cfg(windows)]
+    nt_buffer: Vec<u8>,
 }
 
 impl WinCpuSampler {
     pub fn new() -> Self {
+        #[cfg(windows)]
+        let nt_query = resolve_nt_query_system_information();
+
         let mut s = Self {
             prev_sys_idle: 0,
             prev_sys_kernel: 0,
@@ -42,6 +57,10 @@ impl WinCpuSampler {
             prev_wall_filetime: 0,
             prev_procs: HashMap::new(),
             initialized: false,
+            #[cfg(windows)]
+            nt_query,
+            #[cfg(windows)]
+            nt_buffer: vec![0u8; 512 * 1024],
         };
         let _ = s.sample();
         s
@@ -71,7 +90,7 @@ impl WinCpuSampler {
             filetime_to_u64(ft)
         };
 
-        let raw_procs = query_all_process_info();
+        let raw_procs = self.query_all_process_info();
 
         if !sys_ok || raw_procs.is_empty() {
             return WinCpuSnapshot::default();
@@ -263,83 +282,82 @@ struct NtSystemProcessInformation {
 }
 
 #[cfg(windows)]
-fn query_all_process_info() -> Vec<RawProcInfo> {
-    use std::ffi::c_void;
+fn resolve_nt_query_system_information() -> Option<NtQuerySystemInformationFn> {
     use windows::core::{s, w};
     use windows::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress};
 
-    type NtQuerySystemInformationFn = unsafe extern "system" fn(
-        system_information_class: u32,
-        system_information: *mut c_void,
-        system_information_length: u32,
-        return_length: *mut u32,
-    ) -> i32;
-
-    const SYSTEM_PROCESS_INFORMATION_CLASS: u32 = 5;
-    const STATUS_INFO_LENGTH_MISMATCH: i32 = 0xC0000004u32 as i32;
-
     unsafe {
-        let Ok(ntdll) = GetModuleHandleW(w!("ntdll.dll")) else {
+        let ntdll = GetModuleHandleW(w!("ntdll.dll")).ok()?;
+        let proc_ptr = GetProcAddress(ntdll, s!("NtQuerySystemInformation"))?;
+        Some(std::mem::transmute(proc_ptr))
+    }
+}
+
+#[cfg(windows)]
+impl WinCpuSampler {
+    fn query_all_process_info(&mut self) -> Vec<RawProcInfo> {
+        use std::ffi::c_void;
+
+        const SYSTEM_PROCESS_INFORMATION_CLASS: u32 = 5;
+        const STATUS_INFO_LENGTH_MISMATCH: i32 = 0xC0000004u32 as i32;
+
+        let Some(nt_query) = self.nt_query else {
             return Vec::new();
         };
-        let Some(proc_ptr) = GetProcAddress(ntdll, s!("NtQuerySystemInformation")) else {
-            return Vec::new();
-        };
-        let nt_query: NtQuerySystemInformationFn = std::mem::transmute(proc_ptr);
 
-        let mut buf_size: usize = 512 * 1024;
-        let mut buffer: Vec<u8> = vec![0u8; buf_size];
+        unsafe {
+            loop {
+                let mut ret_len: u32 = 0;
+                let status = nt_query(
+                    SYSTEM_PROCESS_INFORMATION_CLASS,
+                    self.nt_buffer.as_mut_ptr() as *mut c_void,
+                    self.nt_buffer.len() as u32,
+                    &mut ret_len,
+                );
 
-        loop {
-            let mut ret_len: u32 = 0;
-            let status = nt_query(
-                SYSTEM_PROCESS_INFORMATION_CLASS,
-                buffer.as_mut_ptr() as *mut c_void,
-                buffer.len() as u32,
-                &mut ret_len,
-            );
+                if status == STATUS_INFO_LENGTH_MISMATCH {
+                    let next_size = (ret_len as usize).max(self.nt_buffer.len() * 2) + 65536;
+                    if next_size > 64 * 1024 * 1024 {
+                        return Vec::new();
+                    }
+                    self.nt_buffer.resize(next_size, 0);
+                    continue;
+                }
 
-            if status == STATUS_INFO_LENGTH_MISMATCH {
-                buf_size = (ret_len as usize).max(buf_size * 2) + 65536;
-                if buf_size > 64 * 1024 * 1024 {
+                if status < 0 {
                     return Vec::new();
                 }
-                buffer.resize(buf_size, 0);
-                continue;
-            }
-
-            if status < 0 {
-                return Vec::new();
-            }
-            break;
-        }
-
-        let mut results = Vec::with_capacity(512);
-        let mut offset: usize = 0;
-        let min_size = std::mem::size_of::<NtSystemProcessInformation>();
-
-        while offset + min_size <= buffer.len() {
-            let entry = &*(buffer.as_ptr().add(offset) as *const NtSystemProcessInformation);
-            let pid = entry.unique_process_id as u32;
-            let user_t = entry.user_time.max(0) as u64;
-            let kernel_t = entry.kernel_time.max(0) as u64;
-
-            results.push(RawProcInfo {
-                pid,
-                create_time: entry.create_time,
-                total_time: user_t.saturating_add(kernel_t),
-                handle_count: entry.handle_count,
-                thread_count: entry.number_of_threads,
-                read_bytes: entry.read_transfer_count.max(0) as u64,
-                write_bytes: entry.write_transfer_count.max(0) as u64,
-            });
-
-            if entry.next_entry_offset == 0 {
                 break;
             }
-            offset = offset.saturating_add(entry.next_entry_offset as usize);
-        }
 
-        results
+            let mut results = Vec::with_capacity(512);
+            let mut offset: usize = 0;
+            let min_size = std::mem::size_of::<NtSystemProcessInformation>();
+
+            while offset + min_size <= self.nt_buffer.len() {
+                let entry =
+                    &*(self.nt_buffer.as_ptr().add(offset) as *const NtSystemProcessInformation);
+                let pid = entry.unique_process_id as u32;
+                let user_t = entry.user_time.max(0) as u64;
+                let kernel_t = entry.kernel_time.max(0) as u64;
+
+                results.push(RawProcInfo {
+                    pid,
+                    create_time: entry.create_time,
+                    total_time: user_t.saturating_add(kernel_t),
+                    handle_count: entry.handle_count,
+                    thread_count: entry.number_of_threads,
+                    read_bytes: entry.read_transfer_count.max(0) as u64,
+                    write_bytes: entry.write_transfer_count.max(0) as u64,
+                });
+
+                if entry.next_entry_offset == 0 {
+                    break;
+                }
+                offset = offset.saturating_add(entry.next_entry_offset as usize);
+            }
+
+            results
+        }
     }
 }

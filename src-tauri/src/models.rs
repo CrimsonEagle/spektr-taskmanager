@@ -22,6 +22,14 @@ pub struct MemoryMetrics {
     pub usage_percent: f32,
     pub swap_used_bytes: u64,
     pub swap_total_bytes: u64,
+    #[serde(default)]
+    pub commit_total_bytes: u64,
+    #[serde(default)]
+    pub commit_limit_bytes: u64,
+    #[serde(default)]
+    pub paged_pool_bytes: u64,
+    #[serde(default)]
+    pub non_paged_pool_bytes: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -128,6 +136,7 @@ pub struct ProcessEntry {
     pub cmd_line: String,
     pub handle_count: Option<u32>,
     pub thread_count: Option<u32>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub cpu_history: Vec<f32>,
 }
 
@@ -214,6 +223,8 @@ pub struct ServiceEntry {
     pub display_name: String,
     pub status: String,
     pub pid: Option<u32>,
+    #[serde(default)]
+    pub start_type: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -231,4 +242,92 @@ pub struct FileLockEntry {
 pub struct ActionResult {
     pub ok: bool,
     pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CpuCoreInfo {
+    pub index: u32,
+    pub core_id: u32,
+    pub efficiency_class: u8,
+    pub is_p_core: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProcessAffinityInfo {
+    pub pid: u32,
+    pub process_mask: u64,
+    pub system_mask: u64,
+    pub cores: Vec<CpuCoreInfo>,
+    pub has_hybrid_cores: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProcessSecurityInfo {
+    pub exe_path: String,
+    pub sha256: String,
+    pub file_size: u64,
+    pub company_name: Option<String>,
+    pub file_description: Option<String>,
+    pub file_version: Option<String>,
+    pub signed: bool,
+    pub signature_status: String,
+    pub virustotal_url: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProcessModuleEntry {
+    pub name: String,
+    pub path: String,
+    pub size_bytes: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProcessThreadEntry {
+    pub tid: u32,
+    pub base_priority: i32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProcessModulesThreads {
+    pub modules: Vec<ProcessModuleEntry>,
+    pub threads: Vec<ProcessThreadEntry>,
+    pub total_modules: usize,
+    pub total_threads: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProcessEnvInfo {
+    pub cwd: Option<String>,
+    pub env_vars: Vec<(String, String)>,
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProcessRule {
+    pub id: String,
+    pub process_name: String,
+    pub enabled: bool,
+    pub priority: Option<String>,
+    pub eco_mode: Option<bool>,
+    pub affinity_mask: Option<u64>,
+    pub alert_cpu_pct: Option<f32>,
+    pub alert_ram_mb: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RuleAlertEvent {
+    pub rule_id: String,
+    pub process_name: String,
+    pub pid: u32,
+    pub message: String,
+    pub timestamp: u64,
 }

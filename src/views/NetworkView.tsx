@@ -1,11 +1,13 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowDown,
   ArrowUp,
+  Globe,
   RefreshCw,
   Search,
   Trash2,
   Wifi,
+  X,
 } from "lucide-react";
 import {
   formatBytes,
@@ -30,7 +32,15 @@ const DEV_PORTS = new Set([
   8443, 9000, 11434, 27017,
 ]);
 
-export const NetworkView: React.FC<NetworkViewProps> = ({
+function isResolvableRemoteIp(ip: string): boolean {
+  if (!ip || ip === "*" || ip === "0.0.0.0" || ip === "::" || ip === "::1") {
+    return false;
+  }
+  if (ip.startsWith("127.")) return false;
+  return true;
+}
+
+export const NetworkView: React.FC<NetworkViewProps> = React.memo(({
   snapshot,
   onInspectPid,
   onActionFeedback,
@@ -39,21 +49,68 @@ export const NetworkView: React.FC<NetworkViewProps> = ({
   const [loading, setLoading] = useState(true);
   const [filterMode, setFilterMode] = useState<"listening" | "all">("listening");
   const [search, setSearch] = useState("");
+  const [dnsCache, setDnsCache] = useState<Record<string, string | null>>({});
+  const [dnsLoading, setDnsLoading] = useState<Record<string, boolean>>({});
+  const mountedRef = useRef(true);
+  const killTimerRef = useRef<number | null>(null);
 
   const fetchConnections = useCallback(async () => {
     try {
       const list = await api.getNetworkConnections();
-      setConnections(list);
+      if (mountedRef.current) {
+        setConnections(list);
+      }
     } finally {
-      setLoading(false);
+      if (mountedRef.current) {
+        setLoading(false);
+      }
     }
   }, []);
 
+  // Overlap-safe recursive polling that pauses while the window is hidden
   useEffect(() => {
-    fetchConnections();
-    const id = setInterval(fetchConnections, 3000);
-    return () => clearInterval(id);
+    mountedRef.current = true;
+    let pollTimer: number | null = null;
+
+    const scheduleNext = () => {
+      if (!mountedRef.current || document.hidden) return;
+      pollTimer = window.setTimeout(runPoll, 3000);
+    };
+
+    const runPoll = async () => {
+      if (!mountedRef.current || document.hidden) return;
+      await fetchConnections();
+      scheduleNext();
+    };
+
+    const onVisibilityChange = () => {
+      if (pollTimer !== null) {
+        window.clearTimeout(pollTimer);
+        pollTimer = null;
+      }
+      if (!document.hidden && mountedRef.current) {
+        runPoll();
+      }
+    };
+
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    runPoll();
+
+    return () => {
+      mountedRef.current = false;
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      if (pollTimer !== null) window.clearTimeout(pollTimer);
+      if (killTimerRef.current !== null) window.clearTimeout(killTimerRef.current);
+    };
   }, [fetchConnections]);
+
+  const listeningCount = useMemo(() => {
+    let count = 0;
+    for (let i = 0; i < connections.length; i++) {
+      if (connections[i].state === "LISTENING") count++;
+    }
+    return count;
+  }, [connections]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase().replace(/^:/, "");
@@ -76,7 +133,64 @@ export const NetworkView: React.FC<NetworkViewProps> = ({
     e.stopPropagation();
     const res = await api.killProcess(pid);
     onActionFeedback(res);
-    setTimeout(fetchConnections, 300);
+    if (killTimerRef.current !== null) {
+      window.clearTimeout(killTimerRef.current);
+    }
+    killTimerRef.current = window.setTimeout(() => {
+      killTimerRef.current = null;
+      fetchConnections();
+    }, 300);
+  };
+
+  const handleCloseTcp = async (
+    e: React.MouseEvent,
+    c: NetworkConnectionEntry
+  ) => {
+    e.stopPropagation();
+    try {
+      await api.closeTcpConnection(
+        c.localAddr,
+        c.localPort,
+        c.remoteAddr,
+        c.remotePort
+      );
+      onActionFeedback({
+        ok: true,
+        message: `TCP-Verbindung zu ${c.remoteAddr}:${c.remotePort} getrennt.`,
+      });
+      if (killTimerRef.current !== null) {
+        window.clearTimeout(killTimerRef.current);
+      }
+      killTimerRef.current = window.setTimeout(() => {
+        killTimerRef.current = null;
+        fetchConnections();
+      }, 250);
+    } catch (err) {
+      onActionFeedback({
+        ok: false,
+        message: `Verbindung konnte nicht getrennt werden: ${String(err)}`,
+      });
+    }
+  };
+
+  const handleResolveDns = async (e: React.MouseEvent, ip: string) => {
+    e.stopPropagation();
+    if (!isResolvableRemoteIp(ip) || dnsLoading[ip]) return;
+    setDnsLoading((prev) => ({ ...prev, [ip]: true }));
+    try {
+      const host = await api.resolveReverseDns(ip);
+      if (mountedRef.current) {
+        setDnsCache((prev) => ({ ...prev, [ip]: host }));
+      }
+    } catch {
+      if (mountedRef.current) {
+        setDnsCache((prev) => ({ ...prev, [ip]: null }));
+      }
+    } finally {
+      if (mountedRef.current) {
+        setDnsLoading((prev) => ({ ...prev, [ip]: false }));
+      }
+    }
   };
 
   return (
@@ -179,8 +293,7 @@ export const NetworkView: React.FC<NetworkViewProps> = ({
                     : "var(--text-muted)",
               }}
             >
-              Offene Ports (
-              {connections.filter((c) => c.state === "LISTENING").length})
+              Offene Ports ({listeningCount})
             </button>
             <button
               onClick={() => setFilterMode("all")}
@@ -216,7 +329,7 @@ export const NetworkView: React.FC<NetworkViewProps> = ({
       {/* Ports Table */}
       <div className="fluent-card flex-1 flex flex-col overflow-hidden">
         <div
-          className="grid grid-cols-[90px_76px_minmax(180px,1fr)_165px_100px_70px] items-center gap-2 px-4 py-2.5 border-b text-[11px] font-semibold uppercase tracking-wider shrink-0"
+          className="grid grid-cols-[90px_76px_minmax(170px,1fr)_minmax(180px,1.1fr)_96px_118px] items-center gap-2 px-4 py-2.5 border-b text-[11px] font-semibold uppercase tracking-wider shrink-0"
           style={{
             borderColor: "var(--border-subtle)",
             backgroundColor: "var(--bg-subtle)",
@@ -254,7 +367,7 @@ export const NetworkView: React.FC<NetworkViewProps> = ({
                 <div
                   key={`${c.protocol}-${c.localPort}-${c.remotePort}-${c.pid}-${idx}`}
                   onClick={() => c.pid > 4 && onInspectPid(c.pid)}
-                  className="group grid grid-cols-[90px_76px_minmax(180px,1fr)_165px_100px_70px] items-center gap-2 px-4 py-2 border-b text-xs transition-colors hover:bg-[var(--bg-surface-hover)] cursor-pointer"
+                  className="group grid grid-cols-[90px_76px_minmax(170px,1fr)_minmax(180px,1.1fr)_96px_118px] items-center gap-2 px-4 py-2 border-b text-xs transition-colors hover:bg-[var(--bg-surface-hover)] cursor-pointer"
                   style={{ borderColor: "var(--border-subtle)" }}
                 >
                   <div className="font-mono font-bold tabular-nums flex items-center gap-1.5">
@@ -307,13 +420,53 @@ export const NetworkView: React.FC<NetworkViewProps> = ({
                   </div>
 
                   <div
-                    className="font-mono text-[11px] truncate tabular-nums"
-                    style={{ color: "var(--text-secondary)" }}
+                    className="min-w-0 flex flex-col"
                     title={`${c.localAddr}:${c.localPort} -> ${c.remoteAddr}:${c.remotePort}`}
                   >
-                    {c.state === "LISTENING"
-                      ? c.localAddr
-                      : `${c.remoteAddr}:${c.remotePort}`}
+                    {c.state === "LISTENING" ? (
+                      <span
+                        className="font-mono text-[11px] truncate tabular-nums"
+                        style={{ color: "var(--text-secondary)" }}
+                      >
+                        {c.localAddr}
+                      </span>
+                    ) : (
+                      <>
+                        <div className="flex items-center gap-1 min-w-0">
+                          <span
+                            className="font-mono text-[11px] truncate tabular-nums"
+                            style={{ color: "var(--text-secondary)" }}
+                          >
+                            {c.remoteAddr}:{c.remotePort}
+                          </span>
+                          {isResolvableRemoteIp(c.remoteAddr) &&
+                            !(c.remoteAddr in dnsCache) && (
+                              <button
+                                onClick={(e) => handleResolveDns(e, c.remoteAddr)}
+                                disabled={!!dnsLoading[c.remoteAddr]}
+                                className="px-1 py-0.5 rounded text-[9px] font-semibold inline-flex items-center gap-0.5 cursor-pointer hover:bg-[var(--bg-surface-active)] shrink-0"
+                                style={{
+                                  backgroundColor: "var(--bg-subtle)",
+                                  color: "var(--accent-cpu)",
+                                }}
+                                title="Reverse-DNS (Hostname) auflösen"
+                              >
+                                <Globe className="w-2.5 h-2.5" />
+                                {dnsLoading[c.remoteAddr] ? "…" : "DNS"}
+                              </button>
+                            )}
+                        </div>
+                        {c.remoteAddr in dnsCache && (
+                          <span
+                            className="text-[10px] truncate"
+                            style={{ color: "var(--accent-cpu)" }}
+                            title={dnsCache[c.remoteAddr] ?? "Kein Hostname"}
+                          >
+                            {dnsCache[c.remoteAddr] ?? "Kein PTR-Eintrag"}
+                          </span>
+                        )}
+                      </>
+                    )}
                   </div>
 
                   <div>
@@ -338,7 +491,24 @@ export const NetworkView: React.FC<NetworkViewProps> = ({
                     </span>
                   </div>
 
-                  <div className="flex justify-end">
+                  <div className="flex justify-end items-center gap-1">
+                    {c.protocol.toUpperCase().startsWith("TCP") &&
+                      c.state === "ESTABLISHED" &&
+                      c.localAddr.includes(".") &&
+                      c.remoteAddr.includes(".") && (
+                        <button
+                          onClick={(e) => handleCloseTcp(e, c)}
+                          className="opacity-0 group-hover:opacity-100 px-1.5 py-1 rounded-lg text-[10px] font-semibold flex items-center gap-0.5 cursor-pointer transition-opacity"
+                          style={{
+                            backgroundColor: "var(--accent-disk-soft)",
+                            color: "var(--accent-disk)",
+                          }}
+                          title="TCP-Verbindung trennen (erfordert ggf. Adminrechte)"
+                        >
+                          <X className="w-3 h-3" />
+                          Trennen
+                        </button>
+                      )}
                     {c.pid > 4 && (
                       <button
                         onClick={(e) => killPortOwner(e, c.pid)}
@@ -362,4 +532,6 @@ export const NetworkView: React.FC<NetworkViewProps> = ({
       </div>
     </div>
   );
-};
+});
+
+NetworkView.displayName = "NetworkView";

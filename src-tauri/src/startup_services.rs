@@ -70,8 +70,151 @@ pub fn list_startup_entries() -> Vec<StartupEntry> {
         }
     }
 
+    // Read-only Task Scheduler Logon & Boot triggers from Registry (zero subprocesses)
+    items.extend(read_task_scheduler_startup());
+
     items.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
     items
+}
+
+#[cfg(windows)]
+fn read_task_scheduler_startup() -> Vec<StartupEntry> {
+    use std::collections::HashSet;
+    use std::ffi::c_void;
+    use windows::core::{w, PCWSTR, PWSTR};
+    use windows::Win32::System::Registry::{
+        RegCloseKey, RegEnumKeyExW, RegGetValueW, RegOpenKeyExW, HKEY, HKEY_LOCAL_MACHINE,
+        KEY_READ, RRF_RT_REG_SZ,
+    };
+
+    let mut results = Vec::new();
+    let mut seen_ids = HashSet::new();
+
+    unsafe {
+        let mut tasks_root = HKEY::default();
+        if RegOpenKeyExW(
+            HKEY_LOCAL_MACHINE,
+            w!("SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Schedule\\TaskCache\\Tasks"),
+            0,
+            KEY_READ,
+            &mut tasks_root,
+        )
+        .is_err()
+        {
+            return results;
+        }
+
+        let triggers = [
+            (
+                "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Schedule\\TaskCache\\Logon",
+                "Benutzer (Logon)",
+            ),
+            (
+                "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Schedule\\TaskCache\\Boot",
+                "System (Boot)",
+            ),
+        ];
+
+        for (subkey_path, scope_label) in triggers {
+            let wide_sub: Vec<u16> = subkey_path
+                .encode_utf16()
+                .chain(std::iter::once(0))
+                .collect();
+            let mut trig_key = HKEY::default();
+            if RegOpenKeyExW(
+                HKEY_LOCAL_MACHINE,
+                PCWSTR(wide_sub.as_ptr()),
+                0,
+                KEY_READ,
+                &mut trig_key,
+            )
+            .is_err()
+            {
+                continue;
+            }
+
+            let mut idx = 0u32;
+            loop {
+                let mut guid_buf = [0u16; 128];
+                let mut guid_len = guid_buf.len() as u32;
+                let res = RegEnumKeyExW(
+                    trig_key,
+                    idx,
+                    PWSTR(guid_buf.as_mut_ptr()),
+                    &mut guid_len,
+                    None,
+                    PWSTR::null(),
+                    None,
+                    None,
+                );
+                if res.is_err() {
+                    break;
+                }
+                idx += 1;
+                if guid_len == 0 {
+                    continue;
+                }
+
+                let guid_str = String::from_utf16_lossy(&guid_buf[..guid_len as usize]);
+                let guid_wide: Vec<u16> =
+                    guid_str.encode_utf16().chain(std::iter::once(0)).collect();
+
+                let mut path_buf = [0u16; 512];
+                let mut path_bytes = (path_buf.len() * 2) as u32;
+                let got_path = RegGetValueW(
+                    tasks_root,
+                    PCWSTR(guid_wide.as_ptr()),
+                    w!("Path"),
+                    RRF_RT_REG_SZ,
+                    None,
+                    Some(path_buf.as_mut_ptr() as *mut c_void),
+                    Some(&mut path_bytes),
+                )
+                .is_ok();
+
+                if !got_path || path_bytes < 2 {
+                    continue;
+                }
+                let u16_len = (path_bytes as usize) / 2;
+                let end = path_buf[..u16_len]
+                    .iter()
+                    .position(|&c| c == 0)
+                    .unwrap_or(u16_len);
+                let task_path = String::from_utf16_lossy(&path_buf[..end]).trim().to_string();
+                if task_path.is_empty() {
+                    continue;
+                }
+
+                let id = format!("task::{task_path}");
+                if !seen_ids.insert(id.clone()) {
+                    continue;
+                }
+
+                let display_name = task_path
+                    .rsplit('\\')
+                    .next()
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or(&task_path)
+                    .to_string();
+
+                results.push(StartupEntry {
+                    id,
+                    name: display_name,
+                    command: task_path,
+                    location: "Task Scheduler".to_string(),
+                    scope: scope_label.to_string(),
+                    enabled: true,
+                    registry_subkey: "TaskScheduler".to_string(),
+                });
+            }
+
+            let _ = RegCloseKey(trig_key);
+        }
+
+        let _ = RegCloseKey(tasks_root);
+    }
+
+    results
 }
 
 #[cfg(windows)]
@@ -341,6 +484,9 @@ pub fn list_services() -> Vec<ServiceEntry> {
                     services_returned as usize,
                 );
 
+                // Open HKLM\SYSTEM\CurrentControlSet\Services once for fast read-only start_type lookups (no admin needed)
+                let services_key = open_services_registry_key();
+
                 for svc in entries {
                     let name = svc
                         .lpServiceName
@@ -364,13 +510,21 @@ pub fn list_services() -> Vec<ServiceEntry> {
                     } else {
                         None
                     };
+                    let start_type = services_key
+                        .as_ref()
+                        .and_then(|&hk| read_service_start_type(hk, &name));
 
                     list.push(ServiceEntry {
                         name,
                         display_name,
                         status,
                         pid,
+                        start_type,
                     });
+                }
+
+                if let Some(hk) = services_key {
+                    let _ = windows::Win32::System::Registry::RegCloseKey(hk);
                 }
             }
         }
@@ -386,6 +540,68 @@ pub fn list_services() -> Vec<ServiceEntry> {
             .then_with(|| a.display_name.to_lowercase().cmp(&b.display_name.to_lowercase()))
     });
     list
+}
+
+#[cfg(windows)]
+fn open_services_registry_key() -> Option<windows::Win32::System::Registry::HKEY> {
+    use windows::core::w;
+    use windows::Win32::System::Registry::{RegOpenKeyExW, HKEY, HKEY_LOCAL_MACHINE, KEY_READ};
+
+    unsafe {
+        let mut hkey = HKEY::default();
+        if RegOpenKeyExW(
+            HKEY_LOCAL_MACHINE,
+            w!("SYSTEM\\CurrentControlSet\\Services"),
+            0,
+            KEY_READ,
+            &mut hkey,
+        )
+        .is_ok()
+        {
+            Some(hkey)
+        } else {
+            None
+        }
+    }
+}
+
+#[cfg(windows)]
+fn read_service_start_type(
+    services_root: windows::Win32::System::Registry::HKEY,
+    service_name: &str,
+) -> Option<String> {
+    use std::ffi::c_void;
+    use windows::core::{w, PCWSTR};
+    use windows::Win32::System::Registry::{RegGetValueW, RRF_RT_REG_DWORD};
+
+    let wide_subkey: Vec<u16> = service_name
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
+    let mut start_val: u32 = 0;
+    let mut data_len: u32 = std::mem::size_of::<u32>() as u32;
+
+    unsafe {
+        let res = RegGetValueW(
+            services_root,
+            PCWSTR(wide_subkey.as_ptr()),
+            w!("Start"),
+            RRF_RT_REG_DWORD,
+            None,
+            Some(&mut start_val as *mut u32 as *mut c_void),
+            Some(&mut data_len),
+        );
+        if res.is_err() {
+            return None;
+        }
+    }
+
+    match start_val {
+        2 => Some("auto".to_string()),
+        3 => Some("manual".to_string()),
+        4 => Some("disabled".to_string()),
+        _ => None,
+    }
 }
 
 #[cfg(windows)]
@@ -481,4 +697,65 @@ pub fn control_service(service_name: &str, action: &str) -> ActionResult {
         let _ = CloseServiceHandle(scm);
         result
     }
+}
+
+#[cfg(windows)]
+pub fn set_service_start_type(service_name: &str, start_type: &str) -> Result<(), String> {
+    use windows::core::PCWSTR;
+    use windows::Win32::System::Services::{
+        ChangeServiceConfigW, CloseServiceHandle, OpenSCManagerW, OpenServiceW, ENUM_SERVICE_TYPE,
+        SC_MANAGER_CONNECT, SERVICE_AUTO_START, SERVICE_CHANGE_CONFIG, SERVICE_DEMAND_START,
+        SERVICE_DISABLED, SERVICE_ERROR, SERVICE_NO_CHANGE,
+    };
+
+    let win_start_type = match start_type {
+        "auto" => SERVICE_AUTO_START,
+        "manual" => SERVICE_DEMAND_START,
+        "disabled" => SERVICE_DISABLED,
+        _ => return Err(format!("Unbekannter Starttyp: {start_type}")),
+    };
+
+    let wide_name: Vec<u16> = service_name
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
+
+    unsafe {
+        let scm = OpenSCManagerW(None, None, SC_MANAGER_CONNECT)
+            .map_err(|e| format!("Dienst-Manager konnte nicht geöffnet werden: {e}"))?;
+
+        let service = match OpenServiceW(scm, PCWSTR(wide_name.as_ptr()), SERVICE_CHANGE_CONFIG) {
+            Ok(s) => s,
+            Err(e) => {
+                let _ = CloseServiceHandle(scm);
+                return Err(format!(
+                    "Zugriff auf Dienst '{service_name}' verweigert (Administratorrechte erforderlich): {e}"
+                ));
+            }
+        };
+
+        let res = ChangeServiceConfigW(
+            service,
+            ENUM_SERVICE_TYPE(SERVICE_NO_CHANGE),
+            win_start_type,
+            SERVICE_ERROR(SERVICE_NO_CHANGE),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
+
+        let _ = CloseServiceHandle(service);
+        let _ = CloseServiceHandle(scm);
+
+        res.map_err(|e| format!("Starttyp für '{service_name}' konnte nicht geändert werden: {e}"))
+    }
+}
+
+#[cfg(not(windows))]
+pub fn set_service_start_type(_service_name: &str, _start_type: &str) -> Result<(), String> {
+    Err("Nur unter Windows unterstützt.".into())
 }

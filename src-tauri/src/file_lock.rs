@@ -17,7 +17,44 @@ pub fn find_file_locks(
         return Err("Bitte gib einen gültigen Dateipfad an.".into());
     }
 
-    let wide_path: Vec<u16> = trimmed.encode_utf16().chain(std::iter::once(0)).collect();
+    const MAX_DIR_FILES: usize = 500;
+    let target = std::path::Path::new(trimmed);
+    let wide_paths: Vec<Vec<u16>> = if target.is_dir() {
+        let mut collected = Vec::new();
+        let mut stack = vec![target.to_path_buf()];
+        while let Some(dir) = stack.pop() {
+            if collected.len() >= MAX_DIR_FILES {
+                break;
+            }
+            let Ok(entries) = std::fs::read_dir(&dir) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                if collected.len() >= MAX_DIR_FILES {
+                    break;
+                }
+                let Ok(ft) = entry.file_type() else {
+                    continue;
+                };
+                if ft.is_symlink() {
+                    continue;
+                }
+                let path = entry.path();
+                if ft.is_dir() {
+                    stack.push(path);
+                } else if ft.is_file() {
+                    let s = path.to_string_lossy();
+                    collected.push(s.encode_utf16().chain(std::iter::once(0)).collect());
+                }
+            }
+        }
+        if collected.is_empty() {
+            return Ok(Vec::new());
+        }
+        collected
+    } else {
+        vec![trimmed.encode_utf16().chain(std::iter::once(0)).collect()]
+    };
 
     unsafe {
         let mut session: u32 = 0;
@@ -30,12 +67,12 @@ pub fn find_file_locks(
             ));
         }
 
-        let files = [PCWSTR(wide_path.as_ptr())];
+        let files: Vec<PCWSTR> = wide_paths.iter().map(|w| PCWSTR(w.as_ptr())).collect();
         let reg_res = RmRegisterResources(session, Some(&files), None, None);
         if reg_res.0 != 0 {
             let _ = RmEndSession(session);
             return Err(format!(
-                "Datei konnte nicht geprüft werden (Code {}). Prüfe ob der Pfad existiert.",
+                "Datei/Ordner konnte nicht geprüft werden (Code {}). Prüfe ob der Pfad existiert.",
                 reg_res.0
             ));
         }
@@ -53,6 +90,7 @@ pub fn find_file_locks(
         );
 
         let mut results = Vec::new();
+        let mut seen_pids = std::collections::HashSet::new();
         if first == ERROR_MORE_DATA && needed > 0 {
             let mut infos = vec![RM_PROCESS_INFO::default(); needed as usize];
             count = needed;
@@ -66,6 +104,9 @@ pub fn find_file_locks(
             if second.0 == 0 {
                 for info in infos.into_iter().take(count as usize) {
                     let pid = info.Process.dwProcessId;
+                    if !seen_pids.insert(pid) {
+                        continue;
+                    }
                     let app_name = utf16_slice_to_string(&info.strAppName);
                     let service_short_name = utf16_slice_to_string(&info.strServiceShortName);
                     let app_type = match info.ApplicationType {

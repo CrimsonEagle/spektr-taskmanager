@@ -1,7 +1,8 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
   Cpu,
+  Download,
   Gpu,
   HardDrive,
   History,
@@ -19,9 +20,12 @@ import {
   formatTimeShort,
   getCategoryMeta,
 } from "../lib/format";
+import { api } from "../lib/tauri";
 import {
+  ActionResult,
   BlameProcess,
   HistoryPoint,
+  PerformanceMetric,
   ProcessCategory,
   TelemetrySnapshot,
   TimeRange,
@@ -30,13 +34,97 @@ import {
 interface PerformanceViewProps {
   snapshot: TelemetrySnapshot;
   history: HistoryPoint[];
+  activeMetric?: PerformanceMetric;
+  onMetricChange?: (metric: PerformanceMetric) => void;
   initialSpikeTimestamp?: number | null;
   onClearInitialSpike?: () => void;
-  onInspectPid: (pid: number) => void;
+  onInspectPid: (pid: number, fallback?: BlameProcess) => void;
+  onActionFeedback?: (res: ActionResult) => void;
 }
 
 type MetricKey = "cpu" | "ram" | "gpu" | "disk" | "net";
 type TimeWindow = 60 | 300 | 900;
+
+function perfToMetricKey(m: PerformanceMetric): MetricKey {
+  if (m === "memory") return "ram";
+  if (m === "network") return "net";
+  return m;
+}
+
+function metricKeyToPerf(k: MetricKey): PerformanceMetric {
+  if (k === "ram") return "memory";
+  if (k === "net") return "network";
+  return k;
+}
+
+// Stable valueSelector functions outside the component so InteractiveAreaChart's useMemo
+// is NOT invalidated on every mousemove/hover re-render!
+const METRIC_SELECTORS: Record<MetricKey, (p: HistoryPoint) => number> = {
+  cpu: (p) => p.cpuPercent,
+  ram: (p) => p.ramPercent,
+  gpu: (p) => p.gpuPercent,
+  disk: (p) => p.diskMbPerSec,
+  net: (p) => p.netKbPerSec,
+};
+
+const METRIC_STATIC_META: Record<
+  MetricKey,
+  {
+    label: string;
+    color: string;
+    unit: string;
+    max: number | undefined;
+    listTitleSingle: string;
+    listTitleRange: string;
+    emptyText: string;
+  }
+> = {
+  cpu: {
+    label: "CPU",
+    color: "var(--accent-cpu)",
+    unit: "%",
+    max: 100,
+    listTitleSingle: "Top CPU-Prozesse zu diesem Zeitpunkt",
+    listTitleRange: "Top CPU-Prozesse im Zeitraum",
+    emptyText: "Keine messbare CPU-Aktivität in diesem Zeitraum.",
+  },
+  ram: {
+    label: "RAM",
+    color: "var(--accent-ram)",
+    unit: "%",
+    max: 100,
+    listTitleSingle: "Top RAM-Prozesse zu diesem Zeitpunkt",
+    listTitleRange: "Top RAM-Prozesse im Zeitraum",
+    emptyText: "Keine RAM-Prozessdaten verfügbar.",
+  },
+  gpu: {
+    label: "GPU",
+    color: "var(--accent-gpu)",
+    unit: "%",
+    max: 100,
+    listTitleSingle: "Top GPU-Prozesse zu diesem Zeitpunkt",
+    listTitleRange: "Top GPU-Prozesse im Zeitraum",
+    emptyText: "Keine aktive GPU-Engine-Auslastung gemessen.",
+  },
+  disk: {
+    label: "Disk I/O",
+    color: "var(--accent-disk)",
+    unit: "MB/s",
+    max: undefined,
+    listTitleSingle: "Top Datenträger-Prozesse zu diesem Zeitpunkt",
+    listTitleRange: "Top Datenträger-Prozesse im Zeitraum",
+    emptyText: "Keine aktive Datenträger-Aktivität in diesem Zeitraum.",
+  },
+  net: {
+    label: "Netzwerk",
+    color: "var(--accent-net)",
+    unit: "KB/s",
+    max: undefined,
+    listTitleSingle: "Aktivste Netzwerk-Prozesse (Verbindungen)",
+    listTitleRange: "Aktivste Netzwerk-Prozesse im Zeitraum",
+    emptyText: "Keine aktiven Netzwerk-Verbindungen gefunden.",
+  },
+};
 
 interface AggregatedProcess {
   key: string;
@@ -58,17 +146,53 @@ interface AggregatedProcess {
   samples: number;
 }
 
-export const PerformanceView: React.FC<PerformanceViewProps> = ({
+export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
   snapshot,
   history,
+  activeMetric,
+  onMetricChange,
   initialSpikeTimestamp,
   onClearInitialSpike,
   onInspectPid,
+  onActionFeedback,
 }) => {
-  const [metric, setMetric] = useState<MetricKey>("cpu");
+  const [internalMetric, setInternalMetric] = useState<MetricKey>("cpu");
+  const metric: MetricKey = activeMetric
+    ? perfToMetricKey(activeMetric)
+    : internalMetric;
+
+  const selectMetric = (next: MetricKey) => {
+    setInternalMetric(next);
+    onMetricChange?.(metricKeyToPerf(next));
+  };
+
   const [windowSec, setWindowSec] = useState<TimeWindow>(300);
   const [selectedRange, setSelectedRange] = useState<TimeRange | null>(null);
   const [hoverPoint, setHoverPoint] = useState<HistoryPoint | null>(null);
+  const [exportMenuOpen, setExportMenuOpen] = useState(false);
+  const [showAllProcesses, setShowAllProcesses] = useState(false);
+  const exportMenuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!exportMenuOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (
+        exportMenuRef.current &&
+        !exportMenuRef.current.contains(e.target as Node)
+      ) {
+        setExportMenuOpen(false);
+      }
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setExportMenuOpen(false);
+    };
+    window.addEventListener("mousedown", onDown);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("mousedown", onDown);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [exportMenuOpen]);
 
   const slicedHistory = useMemo(
     () => history.slice(-windowSec),
@@ -87,75 +211,45 @@ export const PerformanceView: React.FC<PerformanceViewProps> = ({
     onClearInitialSpike?.();
   }, [initialSpikeTimestamp, slicedHistory, onClearInitialSpike]);
 
+  const staticMeta = METRIC_STATIC_META[metric];
+  const valueSelector = METRIC_SELECTORS[metric];
+
+  const currentMetricText =
+    metric === "cpu"
+      ? `${snapshot.cpu.totalUsage.toFixed(1)}%`
+      : metric === "ram"
+        ? `${snapshot.memory.usagePercent.toFixed(1)}%`
+        : metric === "gpu"
+          ? snapshot.gpu.usagePercent != null
+            ? `${snapshot.gpu.usagePercent.toFixed(0)}%`
+            : "–"
+          : metric === "disk"
+            ? formatSpeed(
+                snapshot.disk.readBytesPerSec + snapshot.disk.writeBytesPerSec
+              )
+            : formatSpeed(
+                snapshot.network.rxBytesPerSec + snapshot.network.txBytesPerSec
+              );
+
+  const metricIcon =
+    metric === "cpu" ? (
+      <Cpu className="w-4 h-4" />
+    ) : metric === "ram" ? (
+      <MemoryStick className="w-4 h-4" />
+    ) : metric === "gpu" ? (
+      <Gpu className="w-4 h-4" />
+    ) : metric === "disk" ? (
+      <HardDrive className="w-4 h-4" />
+    ) : (
+      <Wifi className="w-4 h-4" />
+    );
+
   const metricConfig = {
-    cpu: {
-      label: "CPU",
-      color: "var(--accent-cpu)",
-      unit: "%",
-      max: 100 as number | undefined,
-      selector: (p: HistoryPoint) => p.cpuPercent,
-      current: `${snapshot.cpu.totalUsage.toFixed(1)}%`,
-      icon: <Cpu className="w-4 h-4" />,
-      listTitleSingle: "Top CPU-Prozesse zu diesem Zeitpunkt",
-      listTitleRange: "Top CPU-Prozesse im Zeitraum",
-      emptyText: "Keine messbare CPU-Aktivität in diesem Zeitraum.",
-    },
-    ram: {
-      label: "RAM",
-      color: "var(--accent-ram)",
-      unit: "%",
-      max: 100 as number | undefined,
-      selector: (p: HistoryPoint) => p.ramPercent,
-      current: `${snapshot.memory.usagePercent.toFixed(1)}%`,
-      icon: <MemoryStick className="w-4 h-4" />,
-      listTitleSingle: "Top RAM-Prozesse zu diesem Zeitpunkt",
-      listTitleRange: "Top RAM-Prozesse im Zeitraum",
-      emptyText: "Keine RAM-Prozessdaten verfügbar.",
-    },
-    gpu: {
-      label: "GPU",
-      color: "var(--accent-gpu)",
-      unit: "%",
-      max: 100 as number | undefined,
-      selector: (p: HistoryPoint) => p.gpuPercent,
-      current:
-        snapshot.gpu.usagePercent != null
-          ? `${snapshot.gpu.usagePercent.toFixed(0)}%`
-          : "–",
-      icon: <Gpu className="w-4 h-4" />,
-      listTitleSingle: "Top GPU-Prozesse zu diesem Zeitpunkt",
-      listTitleRange: "Top GPU-Prozesse im Zeitraum",
-      emptyText: "Keine aktive GPU-Engine-Auslastung gemessen.",
-    },
-    disk: {
-      label: "Disk I/O",
-      color: "var(--accent-disk)",
-      unit: "MB/s",
-      max: undefined,
-      selector: (p: HistoryPoint) => p.diskMbPerSec,
-      current: formatSpeed(
-        snapshot.disk.readBytesPerSec + snapshot.disk.writeBytesPerSec
-      ),
-      icon: <HardDrive className="w-4 h-4" />,
-      listTitleSingle: "Top Datenträger-Prozesse zu diesem Zeitpunkt",
-      listTitleRange: "Top Datenträger-Prozesse im Zeitraum",
-      emptyText: "Keine aktive Datenträger-Aktivität in diesem Zeitraum.",
-    },
-    net: {
-      label: "Netzwerk",
-      color: "var(--accent-net)",
-      unit: "KB/s",
-      max: undefined,
-      selector: (p: HistoryPoint) => p.netKbPerSec,
-      current: formatSpeed(
-        snapshot.network.rxBytesPerSec + snapshot.network.txBytesPerSec
-      ),
-      icon: <Wifi className="w-4 h-4" />,
-      listTitleSingle: "Aktivste Netzwerk-Prozesse (Verbindungen)",
-      listTitleRange: "Aktivste Netzwerk-Prozesse im Zeitraum",
-      emptyText: "Keine aktiven Netzwerk-Verbindungen gefunden.",
-    },
-  }[metric];
+    ...staticMeta,
+    selector: valueSelector,
+    current: currentMetricText,
+    icon: metricIcon,
+  };
 
   const activePoints = useMemo<HistoryPoint[]>(() => {
     if (selectedRange) {
@@ -175,23 +269,35 @@ export const PerformanceView: React.FC<PerformanceViewProps> = ({
 
   const analytics = useMemo(() => {
     const n = activePoints.length;
-    const sumCpu = activePoints.reduce((s, p) => s + p.cpuPercent, 0);
-    const maxCpu = Math.max(...activePoints.map((p) => p.cpuPercent));
-    const sumRam = activePoints.reduce((s, p) => s + p.ramPercent, 0);
-    const maxRam = Math.max(...activePoints.map((p) => p.ramPercent));
-    const sumGpu = activePoints.reduce((s, p) => s + p.gpuPercent, 0);
-    const maxGpu = Math.max(...activePoints.map((p) => p.gpuPercent));
-    const sumDisk = activePoints.reduce((s, p) => s + p.diskMbPerSec, 0);
-    const maxDisk = Math.max(...activePoints.map((p) => p.diskMbPerSec));
-    const sumNet = activePoints.reduce((s, p) => s + p.netKbPerSec, 0);
-    const maxNet = Math.max(...activePoints.map((p) => p.netKbPerSec));
-    const sumUnacc = activePoints.reduce(
-      (s, p) => s + (p.unaccountedCpuPercent ?? 0),
-      0
-    );
-    const maxUnacc = Math.max(
-      ...activePoints.map((p) => p.unaccountedCpuPercent ?? 0)
-    );
+    let sumCpu = 0;
+    let maxCpu = 0;
+    let sumRam = 0;
+    let maxRam = 0;
+    let sumGpu = 0;
+    let maxGpu = 0;
+    let sumDisk = 0;
+    let maxDisk = 0;
+    let sumNet = 0;
+    let maxNet = 0;
+    let sumUnacc = 0;
+    let maxUnacc = 0;
+
+    for (let i = 0; i < n; i++) {
+      const p = activePoints[i];
+      sumCpu += p.cpuPercent;
+      if (p.cpuPercent > maxCpu) maxCpu = p.cpuPercent;
+      sumRam += p.ramPercent;
+      if (p.ramPercent > maxRam) maxRam = p.ramPercent;
+      sumGpu += p.gpuPercent;
+      if (p.gpuPercent > maxGpu) maxGpu = p.gpuPercent;
+      sumDisk += p.diskMbPerSec;
+      if (p.diskMbPerSec > maxDisk) maxDisk = p.diskMbPerSec;
+      sumNet += p.netKbPerSec;
+      if (p.netKbPerSec > maxNet) maxNet = p.netKbPerSec;
+      const unacc = p.unaccountedCpuPercent ?? 0;
+      sumUnacc += unacc;
+      if (unacc > maxUnacc) maxUnacc = unacc;
+    }
 
     const pickSource = (pt: HistoryPoint): BlameProcess[] => {
       switch (metric) {
@@ -342,9 +448,60 @@ export const PerformanceView: React.FC<PerformanceViewProps> = ({
       maxNet,
       avgUnaccounted: sumUnacc / n,
       maxUnaccounted: maxUnacc,
-      topProcesses: aggregated.slice(0, 6),
+      topProcesses: aggregated.slice(0, 5),
+      allProcesses: aggregated,
     };
   }, [activePoints, metric]);
+
+  const isLiveMode = !isPinned && !hoverPoint;
+
+  // Expandable process list: in Live mode up to 30 live processes from snapshot.processes;
+  // in History/Range mode all unique aggregated BlameProcesses from the selected window.
+  const { displayedProcesses, totalAvailableProcesses } = useMemo(() => {
+    if (isLiveMode && metric !== "net" && snapshot.processes.length > 0) {
+      const liveAgg: AggregatedProcess[] = snapshot.processes.map((p) => ({
+        key: `${p.pid}::${p.name}`,
+        pid: p.pid,
+        name: p.name,
+        subtitle: p.subtitle,
+        category: p.category,
+        avgCpu: p.cpuPercent,
+        maxCpu: p.cpuPercent,
+        avgGpu: p.gpuPercent,
+        maxGpu: p.gpuPercent,
+        avgRamBytes: p.memoryBytes,
+        maxRamBytes: p.memoryBytes,
+        avgDiskBytes: p.diskReadBytesPerSec + p.diskWriteBytesPerSec,
+        maxDiskBytes: p.diskReadBytesPerSec + p.diskWriteBytesPerSec,
+        avgNetConns: 0,
+        maxNetConns: 0,
+        maxNetPorts: 0,
+        samples: 1,
+      }));
+
+      if (metric === "ram") {
+        liveAgg.sort((a, b) => b.avgRamBytes - a.avgRamBytes);
+      } else if (metric === "gpu") {
+        liveAgg.sort((a, b) => b.avgGpu - a.avgGpu);
+      } else if (metric === "disk") {
+        liveAgg.sort((a, b) => b.avgDiskBytes - a.avgDiskBytes);
+      } else {
+        liveAgg.sort((a, b) => b.avgCpu - a.avgCpu);
+      }
+
+      const capped = liveAgg.slice(0, 30);
+      return {
+        displayedProcesses: showAllProcesses ? capped : capped.slice(0, 5),
+        totalAvailableProcesses: capped.length,
+      };
+    }
+
+    const histAll = analytics.allProcesses;
+    return {
+      displayedProcesses: showAllProcesses ? histAll : histAll.slice(0, 5),
+      totalAvailableProcesses: histAll.length,
+    };
+  }, [isLiveMode, metric, snapshot.processes, analytics.allProcesses, showAllProcesses]);
 
   const detectedSpikes = useMemo(() => {
     const out: HistoryPoint[] = [];
@@ -362,6 +519,134 @@ export const PerformanceView: React.FC<PerformanceViewProps> = ({
       startMs: Math.max(minTs, ts - 2500),
       endMs: Math.min(maxTs, ts + 2500),
     });
+  };
+
+  const handleExportReport = async (format: "json" | "csv" | "md") => {
+    setExportMenuOpen(false);
+    const exportPoints =
+      selectedRange != null && activePoints.length > 0
+        ? activePoints
+        : slicedHistory;
+    const tsTag = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+
+    const extMap = {
+      json: { ext: "json", name: "JSON-Bericht" },
+      csv: { ext: "csv", name: "CSV-Tabelle" },
+      md: { ext: "md", name: "Markdown-Bericht" },
+    }[format];
+
+    try {
+      const path = await api.saveFile(
+        `pulse-performance-${metric}-${tsTag}.${extMap.ext}`,
+        extMap.name,
+        [extMap.ext]
+      );
+      if (!path) return;
+
+      let content = "";
+      if (format === "json") {
+        content = JSON.stringify(
+          {
+            exportedAt: new Date().toISOString(),
+            host: snapshot.system.hostname,
+            os: snapshot.system.osName,
+            metric,
+            range: {
+              startMs: analytics.startMs,
+              endMs: analytics.endMs,
+              samples: exportPoints.length,
+            },
+            summary: {
+              avgCpu: Number(analytics.avgCpu.toFixed(2)),
+              maxCpu: Number(analytics.maxCpu.toFixed(2)),
+              avgRam: Number(analytics.avgRam.toFixed(2)),
+              maxRam: Number(analytics.maxRam.toFixed(2)),
+              avgGpu: Number(analytics.avgGpu.toFixed(2)),
+              maxGpu: Number(analytics.maxGpu.toFixed(2)),
+              avgDiskMbPerSec: Number(analytics.avgDisk.toFixed(2)),
+              maxDiskMbPerSec: Number(analytics.maxDisk.toFixed(2)),
+              avgNetKbPerSec: Number(analytics.avgNet.toFixed(2)),
+              maxNetKbPerSec: Number(analytics.maxNet.toFixed(2)),
+            },
+            topProcesses: analytics.topProcesses,
+            spikes: exportPoints
+              .filter((p) => p.isSpike)
+              .map((p) => ({
+                timestamp: new Date(p.timestampMs).toISOString(),
+                reason: p.spikeReason,
+                cpuPercent: p.cpuPercent,
+                ramPercent: p.ramPercent,
+                gpuPercent: p.gpuPercent,
+              })),
+            series: exportPoints.map((p) => ({
+              timestampMs: p.timestampMs,
+              cpuPercent: p.cpuPercent,
+              ramPercent: p.ramPercent,
+              gpuPercent: p.gpuPercent,
+              diskMbPerSec: p.diskMbPerSec,
+              netKbPerSec: p.netKbPerSec,
+              isSpike: p.isSpike,
+              spikeReason: p.spikeReason,
+            })),
+          },
+          null,
+          2
+        );
+      } else if (format === "csv") {
+        const header =
+          "timestamp,cpu_percent,ram_percent,gpu_percent,disk_mb_s,net_kb_s,is_spike,spike_reason";
+        const lines = exportPoints.map((p) => {
+          const reason = (p.spikeReason ?? "").replace(/"/g, '""');
+          return `${new Date(p.timestampMs).toISOString()},${p.cpuPercent.toFixed(2)},${p.ramPercent.toFixed(2)},${p.gpuPercent.toFixed(2)},${p.diskMbPerSec.toFixed(2)},${p.netKbPerSec.toFixed(2)},${p.isSpike},"${reason}"`;
+        });
+        content = [header, ...lines].join("\n");
+      } else {
+        const spikesList = exportPoints.filter((p) => p.isSpike);
+        const mdLines = [
+          `# Pulse Performance-Bericht (${metricConfig.label})`,
+          "",
+          `- **Host**: ${snapshot.system.hostname} (${snapshot.system.osName})`,
+          `- **Zeitraum**: ${formatTimeShort(analytics.startMs)} – ${formatTimeShort(analytics.endMs)} (${exportPoints.length} Samples)`,
+          `- **CPU**: Ø ${analytics.avgCpu.toFixed(1)}% / Max ${analytics.maxCpu.toFixed(1)}%`,
+          `- **RAM**: Ø ${analytics.avgRam.toFixed(1)}% / Max ${analytics.maxRam.toFixed(1)}%`,
+          `- **GPU**: Ø ${analytics.avgGpu.toFixed(1)}% / Max ${analytics.maxGpu.toFixed(1)}%`,
+          `- **Disk**: Ø ${analytics.avgDisk.toFixed(1)} MB/s / Peak ${analytics.maxDisk.toFixed(1)} MB/s`,
+          `- **Netzwerk**: Ø ${analytics.avgNet.toFixed(0)} KB/s / Peak ${analytics.maxNet.toFixed(0)} KB/s`,
+          "",
+          `## Top Prozesse (${metricConfig.label})`,
+          "",
+          "| Prozess | PID | Ø CPU | Peak CPU | Ø RAM |",
+          "|---|---:|---:|---:|---:|",
+          ...analytics.topProcesses.map(
+            (p) =>
+              `| ${p.name} | ${p.pid} | ${p.avgCpu.toFixed(1)}% | ${p.maxCpu.toFixed(1)}% | ${formatBytes(p.avgRamBytes)} |`
+          ),
+        ];
+        if (spikesList.length > 0) {
+          mdLines.push(
+            "",
+            "## Erkannte Spikes",
+            "",
+            ...spikesList.map(
+              (s) =>
+                `- **${formatTimeShort(s.timestampMs)}** — ${s.spikeReason ?? "Lastspitze"} (CPU ${s.cpuPercent.toFixed(1)}%, RAM ${s.ramPercent.toFixed(1)}%)`
+            )
+          );
+        }
+        content = mdLines.join("\n");
+      }
+
+      await api.exportReport(path, content);
+      onActionFeedback?.({
+        ok: true,
+        message: `Bericht erfolgreich exportiert (${extMap.ext.toUpperCase()}).`,
+      });
+    } catch (err) {
+      onActionFeedback?.({
+        ok: false,
+        message: `Export fehlgeschlagen: ${String(err)}`,
+      });
+    }
   };
 
   // Fixed-width metric filter tabs so values updating every second NEVER shift or flicker!
@@ -412,11 +697,11 @@ export const PerformanceView: React.FC<PerformanceViewProps> = ({
 
   const maxNetConnsInList = Math.max(
     1,
-    ...analytics.topProcesses.map((p) => p.maxNetConns || p.maxNetPorts)
+    ...displayedProcesses.map((p) => p.maxNetConns || p.maxNetPorts)
   );
   const maxDiskInList = Math.max(
     1024,
-    ...analytics.topProcesses.map((p) => p.maxDiskBytes)
+    ...displayedProcesses.map((p) => p.maxDiskBytes)
   );
 
   return (
@@ -429,7 +714,7 @@ export const PerformanceView: React.FC<PerformanceViewProps> = ({
             return (
               <button
                 key={tab.id}
-                onClick={() => setMetric(tab.id)}
+                onClick={() => selectMetric(tab.id)}
                 className={`${tab.widthClass} shrink-0 px-3 py-2 rounded-xl border text-xs font-semibold flex items-center justify-between gap-1.5 transition-colors cursor-pointer tabular-nums`}
                 style={{
                   backgroundColor: active
@@ -453,42 +738,89 @@ export const PerformanceView: React.FC<PerformanceViewProps> = ({
           })}
         </div>
 
-        {/* Time Window */}
-        <div
-          className="flex items-center p-1 rounded-xl border gap-0.5 text-xs shrink-0"
-          style={{
-            backgroundColor: "var(--bg-surface)",
-            borderColor: "var(--border-subtle)",
-          }}
-        >
-          {(
-            [
-              { sec: 60, label: "1 Min" },
-              { sec: 300, label: "5 Min" },
-              { sec: 900, label: "15 Min" },
-            ] as const
-          ).map((w) => (
+        {/* Time Window + Export */}
+        <div className="flex items-center gap-2 shrink-0">
+          <div
+            className="flex items-center p-1 rounded-xl border gap-0.5 text-xs shrink-0"
+            style={{
+              backgroundColor: "var(--bg-surface)",
+              borderColor: "var(--border-subtle)",
+            }}
+          >
+            {(
+              [
+                { sec: 60, label: "1 Min" },
+                { sec: 300, label: "5 Min" },
+                { sec: 900, label: "15 Min" },
+              ] as const
+            ).map((w) => (
+              <button
+                key={w.sec}
+                onClick={() => {
+                  setWindowSec(w.sec);
+                  setSelectedRange(null);
+                }}
+                className="px-2.5 py-1 rounded-lg font-medium cursor-pointer transition-colors"
+                style={{
+                  backgroundColor:
+                    windowSec === w.sec
+                      ? "var(--bg-surface-active)"
+                      : "transparent",
+                  color:
+                    windowSec === w.sec
+                      ? "var(--text-primary)"
+                      : "var(--text-muted)",
+                }}
+              >
+                {w.label}
+              </button>
+            ))}
+          </div>
+
+          <div className="relative" ref={exportMenuRef}>
             <button
-              key={w.sec}
-              onClick={() => {
-                setWindowSec(w.sec);
-                setSelectedRange(null);
-              }}
-              className="px-2.5 py-1 rounded-lg font-medium cursor-pointer transition-colors"
+              onClick={() => setExportMenuOpen((v) => !v)}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border text-xs font-medium cursor-pointer hover:bg-[var(--bg-surface-hover)]"
               style={{
-                backgroundColor:
-                  windowSec === w.sec
-                    ? "var(--bg-surface-active)"
-                    : "transparent",
-                color:
-                  windowSec === w.sec
-                    ? "var(--text-primary)"
-                    : "var(--text-muted)",
+                backgroundColor: "var(--bg-surface)",
+                borderColor: "var(--border-subtle)",
+                color: "var(--text-secondary)",
               }}
+              title="Aktuellen Zeitraum & Spike-Analyse exportieren"
             >
-              {w.label}
+              <Download className="w-3.5 h-3.5" />
+              <span>Export</span>
             </button>
-          ))}
+            {exportMenuOpen && (
+              <div
+                className="absolute right-0 mt-1.5 w-44 rounded-xl border p-1 z-30 flex flex-col gap-0.5 text-xs"
+                style={{
+                  backgroundColor: "var(--bg-drawer)",
+                  borderColor: "var(--border-strong)",
+                  boxShadow: "var(--shadow-float)",
+                }}
+              >
+                <button
+                  onClick={() => handleExportReport("md")}
+                  className="px-2.5 py-1.5 rounded-lg text-left hover:bg-[var(--bg-surface-hover)] cursor-pointer font-medium"
+                >
+                  Als Markdown (.md)
+                </button>
+                <button
+                  onClick={() => handleExportReport("csv")}
+                  className="px-2.5 py-1.5 rounded-lg text-left hover:bg-[var(--bg-surface-hover)] cursor-pointer font-medium"
+                >
+                  Als CSV (.csv)
+                </button>
+                <button
+                  onClick={() => handleExportReport("json")}
+                  className="px-2.5 py-1.5 rounded-lg text-left hover:bg-[var(--bg-surface-hover)] cursor-pointer font-medium"
+                >
+                  Als JSON (.json)
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
@@ -700,6 +1032,49 @@ export const PerformanceView: React.FC<PerformanceViewProps> = ({
             </div>
           </div>
 
+          {/* Extra RAM Commit & Pool details when RAM tab is selected */}
+          {metric === "ram" &&
+            ((snapshot.memory.commitTotalBytes ?? 0) > 0 ||
+              (snapshot.memory.pagedPoolBytes ?? 0) > 0 ||
+              (snapshot.memory.nonPagedPoolBytes ?? 0) > 0) && (
+              <div
+                className="px-3 py-2 rounded-lg border text-[11px] flex flex-col gap-1 tabular-nums"
+                style={{
+                  backgroundColor: "var(--bg-subtle)",
+                  borderColor: "var(--border-subtle)",
+                }}
+              >
+                {(snapshot.memory.commitTotalBytes ?? 0) > 0 && (
+                  <div className="flex items-center justify-between">
+                    <span style={{ color: "var(--text-muted)" }}>
+                      Zugesichert (Commit)
+                    </span>
+                    <span
+                      className="font-semibold"
+                      style={{ color: "var(--accent-ram)" }}
+                    >
+                      {formatBytes(snapshot.memory.commitTotalBytes ?? 0)}
+                      {(snapshot.memory.commitLimitBytes ?? 0) > 0
+                        ? ` / ${formatBytes(snapshot.memory.commitLimitBytes ?? 0)}`
+                        : ""}
+                    </span>
+                  </div>
+                )}
+                {((snapshot.memory.pagedPoolBytes ?? 0) > 0 ||
+                  (snapshot.memory.nonPagedPoolBytes ?? 0) > 0) && (
+                  <div className="flex items-center justify-between">
+                    <span style={{ color: "var(--text-muted)" }}>
+                      Ausgelagerter / Nicht-ausgel. Pool
+                    </span>
+                    <span className="font-medium">
+                      {formatBytes(snapshot.memory.pagedPoolBytes ?? 0)} /{" "}
+                      {formatBytes(snapshot.memory.nonPagedPoolBytes ?? 0)}
+                    </span>
+                  </div>
+                )}
+              </div>
+            )}
+
           {/* Extra Disk / Net range stats when Disk or Net tab is selected */}
           {(metric === "disk" || metric === "net") && (
             <div
@@ -732,16 +1107,29 @@ export const PerformanceView: React.FC<PerformanceViewProps> = ({
 
           {/* Metric-Specific Top Processes List */}
           <div className="flex flex-col gap-1.5">
-            <div
-              className="text-[10px] font-semibold uppercase tracking-wider"
-              style={{ color: "var(--text-muted)" }}
-            >
-              {isRangeMode
-                ? metricConfig.listTitleRange
-                : metricConfig.listTitleSingle}
+            <div className="flex items-center justify-between gap-2">
+              <div
+                className="text-[10px] font-semibold uppercase tracking-wider"
+                style={{ color: "var(--text-muted)" }}
+              >
+                {isRangeMode
+                  ? metricConfig.listTitleRange
+                  : metricConfig.listTitleSingle}
+              </div>
+              {totalAvailableProcesses > 5 && (
+                <button
+                  onClick={() => setShowAllProcesses((v) => !v)}
+                  className="text-[11px] font-semibold hover:underline cursor-pointer shrink-0"
+                  style={{ color: metricConfig.color }}
+                >
+                  {showAllProcesses
+                    ? "Weniger anzeigen"
+                    : `Alle anzeigen (${totalAvailableProcesses})`}
+                </button>
+              )}
             </div>
 
-            {analytics.topProcesses.length === 0 ? (
+            {displayedProcesses.length === 0 ? (
               <div
                 className="p-4 rounded-xl border text-center text-xs"
                 style={{
@@ -753,7 +1141,14 @@ export const PerformanceView: React.FC<PerformanceViewProps> = ({
                 {metricConfig.emptyText}
               </div>
             ) : (
-              analytics.topProcesses.map((bp) => {
+              <div
+                className={
+                  showAllProcesses
+                    ? "flex flex-col gap-1.5 max-h-[380px] overflow-y-auto pr-0.5"
+                    : "flex flex-col gap-1.5"
+                }
+              >
+                {displayedProcesses.map((bp) => {
                 const cat = getCategoryMeta(bp.category);
 
                 let primaryVal = "";
@@ -831,10 +1226,23 @@ export const PerformanceView: React.FC<PerformanceViewProps> = ({
                   );
                 }
 
+                const blameFallback: BlameProcess = {
+                  pid: bp.pid,
+                  name: bp.name,
+                  subtitle: bp.subtitle,
+                  category: bp.category,
+                  cpuPercent: bp.avgCpu,
+                  gpuPercent: bp.avgGpu,
+                  memoryBytes: bp.avgRamBytes,
+                  diskBytesPerSec: bp.avgDiskBytes,
+                  netConnections: bp.maxNetConns,
+                  netListeningPorts: bp.maxNetPorts,
+                };
+
                 return (
                   <button
                     key={bp.key}
-                    onClick={() => onInspectPid(bp.pid)}
+                    onClick={() => onInspectPid(bp.pid, blameFallback)}
                     className="flex flex-col gap-1 px-2.5 py-2 rounded-xl border text-left hover:bg-[var(--bg-surface-hover)] cursor-pointer transition-colors"
                     style={{
                       backgroundColor: "var(--bg-subtle)",
@@ -893,7 +1301,8 @@ export const PerformanceView: React.FC<PerformanceViewProps> = ({
                     </div>
                   </button>
                 );
-              })
+              })}
+              </div>
             )}
 
             {/* Residual CPU note ONLY on CPU tab */}
@@ -959,9 +1368,9 @@ export const PerformanceView: React.FC<PerformanceViewProps> = ({
                   style={{ backgroundColor: "var(--bg-surface-solid)" }}
                 >
                   <div
-                    className="h-full rounded-full transition-all duration-300"
+                    className="h-full w-full rounded-full origin-left transition-transform duration-300"
                     style={{
-                      width: `${Math.max(3, val)}%`,
+                      transform: `scaleX(${Math.min(1, Math.max(0.03, val / 100))})`,
                       backgroundColor:
                         val > 80
                           ? "#ef4444"
@@ -1092,4 +1501,6 @@ export const PerformanceView: React.FC<PerformanceViewProps> = ({
       </div>
     </div>
   );
-};
+});
+
+PerformanceView.displayName = "PerformanceView";

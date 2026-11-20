@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { AnimatePresence, motion } from "framer-motion";
+import { motion } from "framer-motion";
 import {
   Activity,
   Flame,
@@ -27,7 +27,6 @@ import {
 } from "../types/telemetry";
 
 interface CommandPaletteProps {
-  open: boolean;
   onClose: () => void;
   processes: ProcessEntry[];
   onNavigate: (tab: NavTab) => void;
@@ -54,7 +53,6 @@ interface PaletteItem {
 }
 
 export const CommandPalette: React.FC<CommandPaletteProps> = ({
-  open,
   onClose,
   processes,
   onNavigate,
@@ -70,15 +68,20 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    if (!open) return;
-    setQuery("");
-    setSelectedIndex(0);
-    setTimeout(() => inputRef.current?.focus(), 20);
+    let active = true;
+    const focusTimer = window.setTimeout(() => inputRef.current?.focus(), 20);
     api
       .getNetworkConnections()
-      .then((list) => setPorts(list.filter((c) => c.state === "LISTENING")))
+      .then((list) => {
+        if (!active) return;
+        setPorts(list.filter((c) => c.state === "LISTENING"));
+      })
       .catch(() => {});
-  }, [open]);
+    return () => {
+      active = false;
+      window.clearTimeout(focusTimer);
+    };
+  }, []);
 
   const items = useMemo<PaletteItem[]>(() => {
     const q = query.trim().toLowerCase();
@@ -330,22 +333,20 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
   };
 
   return (
-    <AnimatePresence>
-      {open && (
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          transition={{ duration: 0.14 }}
-          onMouseDown={(e) => {
-            if (e.target === e.currentTarget) onClose();
-          }}
-          className="fixed inset-0 z-50 flex items-start justify-center pt-20 px-4"
-          style={{
-            backgroundColor: "rgba(0, 0, 0, 0.42)",
-            backdropFilter: "blur(6px)",
-          }}
-        >
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: 0.14 }}
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+      className="fixed inset-0 z-50 flex items-start justify-center pt-20 px-4"
+      style={{
+        backgroundColor: "rgba(0, 0, 0, 0.42)",
+        backdropFilter: "blur(6px)",
+      }}
+    >
           <motion.div
             initial={{ opacity: 0, y: -14, scale: 0.97 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
@@ -473,7 +474,5 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
             </div>
           </motion.div>
         </motion.div>
-      )}
-    </AnimatePresence>
   );
 };

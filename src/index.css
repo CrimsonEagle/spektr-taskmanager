@@ -112,7 +112,6 @@ body,
   background-color: var(--bg-surface);
   border: 1px solid var(--border-subtle);
   box-shadow: var(--shadow-card);
-  backdrop-filter: blur(18px);
   border-radius: 14px;
   transition: border-color 180ms ease, background-color 180ms ease, box-shadow 180ms ease;
 }
@@ -146,20 +145,4 @@ body,
   background: var(--text-muted);
   border: 2px solid transparent;
   background-clip: content-box;
-}
-
-/* Smooth pulse ring for live spikes */
-@keyframes pulse-soft {
-  0%, 100% {
-    opacity: 1;
-    transform: scale(1);
-  }
-  50% {
-    opacity: 0.55;
-    transform: scale(1.18);
-  }
-}
-
-.animate-pulse-soft {
-  animation: pulse-soft 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }

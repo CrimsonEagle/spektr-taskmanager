@@ -31,7 +31,7 @@ interface NavItemDef {
   badge?: number;
 }
 
-export const Sidebar: React.FC<SidebarProps> = ({
+export const Sidebar: React.FC<SidebarProps> = React.memo(({
   activeTab,
   onSelectTab,
   snapshot,
@@ -160,7 +160,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 }}
                 title="Überwacht laufend neu gestartete Prozesse & aktive 3D-Spiele"
               >
-                <span className="w-1.5 h-1.5 rounded-full bg-current animate-pulse-soft" />
+                <span className="w-1.5 h-1.5 rounded-full bg-current" />
                 Auto
               </span>
             )}
@@ -259,7 +259,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 <Cpu className="w-3 h-3 opacity-70 shrink-0" />
                 <span className="truncate">{snapshot.system.hostname}</span>
               </span>
-              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse-soft shrink-0" />
+              <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
             </div>
             <div
               className="flex items-center justify-between tabular-nums"
@@ -273,4 +273,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
       </div>
     </aside>
   );
-};
+});
+
+Sidebar.displayName = "Sidebar";

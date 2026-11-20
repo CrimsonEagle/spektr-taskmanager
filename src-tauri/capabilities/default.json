@@ -19,6 +19,7 @@
     "core:window:allow-set-resizable",
     "core:window:allow-set-theme",
     "core:window:allow-is-maximized",
-    "dialog:allow-open"
+    "dialog:allow-open",
+    "dialog:allow-save"
   ]
 }

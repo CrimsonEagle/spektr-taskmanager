@@ -1,13 +1,13 @@
 import React from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { AlertCircle, CheckCircle2, Info } from "lucide-react";
+import { AlertCircle, AlertTriangle, CheckCircle2, Info } from "lucide-react";
 import { ToastMessage } from "../types/telemetry";
 
 interface ToastContainerProps {
   toasts: ToastMessage[];
 }
 
-export const ToastContainer: React.FC<ToastContainerProps> = ({ toasts }) => {
+export const ToastContainer: React.FC<ToastContainerProps> = React.memo(({ toasts }) => {
   return (
     <div className="fixed bottom-4 right-4 z-50 flex flex-col gap-2 pointer-events-none max-w-sm">
       <AnimatePresence>
@@ -17,6 +17,8 @@ export const ToastContainer: React.FC<ToastContainerProps> = ({ toasts }) => {
               <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
             ) : t.kind === "error" ? (
               <AlertCircle className="w-4 h-4 text-red-500 shrink-0" />
+            ) : t.kind === "warning" ? (
+              <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0" />
             ) : (
               <Info className="w-4 h-4 text-sky-500 shrink-0" />
             );
@@ -44,4 +46,6 @@ export const ToastContainer: React.FC<ToastContainerProps> = ({ toasts }) => {
       </AnimatePresence>
     </div>
   );
-};
+});
+
+ToastContainer.displayName = "ToastContainer";

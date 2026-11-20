@@ -9,20 +9,44 @@ use crate::process_ops;
 use crate::win_cpu::WinCpuSampler;
 use chrono::Utc;
 use std::collections::{HashMap, HashSet, VecDeque};
-use sysinfo::{Components, Disks, Networks, ProcessesToUpdate, System};
+use sysinfo::{
+    Components, Disks, Networks, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind,
+};
 
 const MAX_HISTORY_POINTS: usize = 900; // 15 minutes at 1s interval
-const MAX_SPARKLINE_POINTS: usize = 30;
+const TOP_BLAME_LIMIT: usize = 5;
+
+struct CachedProcMeta {
+    start_time: u64,
+    name: String,
+    exe_path: String,
+    cmd_line: String,
+    category: String,
+    subtitle: String,
+    group_key: String,
+}
+
+fn minimal_process_refresh_kind() -> ProcessRefreshKind {
+    ProcessRefreshKind::nothing()
+        .with_memory()
+        .with_exe(UpdateKind::OnlyIfNotSet)
+        .with_cmd(UpdateKind::OnlyIfNotSet)
+}
 
 pub struct TelemetryEngine {
     sys: System,
     disks: Disks,
     networks: Networks,
     components: Components,
+    has_temp_sensors: bool,
     gpu: GpuCollector,
     win_cpu: WinCpuSampler,
     history: VecDeque<HistoryPoint>,
-    proc_cpu_history: HashMap<u32, VecDeque<f32>>,
+    proc_meta_cache: HashMap<u32, CachedProcMeta>,
+    cached_hostname: String,
+    cached_os_name: String,
+    cached_cpu_brand: String,
+    cached_net_per_pid: HashMap<u32, (u32, u32)>,
     suspended_pids: HashSet<u32>,
     efficiency_pids: HashSet<u32>,
     active_profile: String,
@@ -34,23 +58,50 @@ pub struct TelemetryEngine {
 
 impl TelemetryEngine {
     pub fn new() -> Self {
-        let mut sys = System::new_all();
-        sys.refresh_all();
+        let mut sys = System::new();
+        sys.refresh_cpu_all();
+        sys.refresh_memory();
+        sys.refresh_processes_specifics(
+            ProcessesToUpdate::All,
+            true,
+            minimal_process_refresh_kind(),
+        );
         let disks = Disks::new_with_refreshed_list();
         let networks = Networks::new_with_refreshed_list();
         let components = Components::new_with_refreshed_list();
+        let has_temp_sensors = components.iter().any(|c| {
+            let l = c.label().to_lowercase();
+            (l.contains("cpu") || l.contains("package") || l.contains("core"))
+                && c.temperature().is_some()
+        });
         let gpu = GpuCollector::new();
         let win_cpu = WinCpuSampler::new();
+
+        let cached_hostname = System::host_name().unwrap_or_else(|| "Windows PC".to_string());
+        let cached_os_name = System::long_os_version()
+            .or_else(System::name)
+            .unwrap_or_else(|| "Windows".to_string());
+        let cached_cpu_brand = sys
+            .cpus()
+            .first()
+            .map(|c| c.brand().trim().to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "CPU".to_string());
 
         Self {
             sys,
             disks,
             networks,
             components,
+            has_temp_sensors,
             gpu,
             win_cpu,
             history: VecDeque::with_capacity(MAX_HISTORY_POINTS + 1),
-            proc_cpu_history: HashMap::new(),
+            proc_meta_cache: HashMap::new(),
+            cached_hostname,
+            cached_os_name,
+            cached_cpu_brand,
+            cached_net_per_pid: HashMap::new(),
             suspended_pids: HashSet::new(),
             efficiency_pids: HashSet::new(),
             active_profile: "normal".to_string(),
@@ -168,17 +219,29 @@ impl TelemetryEngine {
     }
 
     pub fn process_lookup(&self) -> HashMap<u32, (String, String, String)> {
-        let mut map = HashMap::new();
+        let mut map = HashMap::with_capacity(self.sys.processes().len());
         for (pid, proc_) in self.sys.processes() {
-            let name = proc_.name().to_string_lossy().to_string();
-            let exe = proc_
-                .exe()
-                .map(|p| p.to_string_lossy().to_string())
-                .unwrap_or_default();
-            let cmd = join_cmd(proc_.cmd());
-            let category = classify_process(&name, &exe, &cmd);
-            let subtitle = extract_subtitle(&name, &cmd, &exe);
-            map.insert(pid.as_u32(), (name, subtitle, category));
+            let pid_u32 = pid.as_u32();
+            if let Some(meta) = self.proc_meta_cache.get(&pid_u32) {
+                map.insert(
+                    pid_u32,
+                    (
+                        meta.name.clone(),
+                        meta.subtitle.clone(),
+                        meta.category.clone(),
+                    ),
+                );
+            } else {
+                let name = proc_.name().to_string_lossy().to_string();
+                let exe = proc_
+                    .exe()
+                    .map(|p| p.to_string_lossy().to_string())
+                    .unwrap_or_default();
+                let cmd = join_cmd(proc_.cmd());
+                let category = classify_process(&name, &exe, &cmd);
+                let subtitle = extract_subtitle(&name, &cmd, &exe);
+                map.insert(pid_u32, (name, subtitle, category));
+            }
         }
         map
     }
@@ -204,13 +267,18 @@ impl TelemetryEngine {
 
         self.sys.refresh_cpu_all();
         self.sys.refresh_memory();
-        self.sys
-            .refresh_processes(ProcessesToUpdate::All, true);
+        self.sys.refresh_processes_specifics(
+            ProcessesToUpdate::All,
+            true,
+            minimal_process_refresh_kind(),
+        );
         let win_snap = self.win_cpu.sample();
         self.networks.refresh(true);
 
-        if self.tick_count % 5 == 1 {
+        if self.tick_count % 20 == 1 {
             self.disks.refresh(true);
+        }
+        if self.has_temp_sensors && self.tick_count % 5 == 1 {
             self.components.refresh(true);
         }
 
@@ -227,20 +295,20 @@ impl TelemetryEngine {
             .iter()
             .map(|c| c.cpu_usage().clamp(0.0, 100.0))
             .collect();
-        let brand = cpus
-            .first()
-            .map(|c| c.brand().trim().to_string())
-            .unwrap_or_else(|| "CPU".to_string());
+        let brand = self.cached_cpu_brand.clone();
         let frequency_mhz = cpus.first().map(|c| c.frequency()).unwrap_or(0);
 
-        let cpu_temp = self
-            .components
-            .iter()
-            .find(|c| {
-                let l = c.label().to_lowercase();
-                l.contains("cpu") || l.contains("package") || l.contains("core")
-            })
-            .and_then(|c| c.temperature());
+        let cpu_temp = if self.has_temp_sensors {
+            self.components
+                .iter()
+                .find(|c| {
+                    let l = c.label().to_lowercase();
+                    l.contains("cpu") || l.contains("package") || l.contains("core")
+                })
+                .and_then(|c| c.temperature())
+        } else {
+            None
+        };
 
         let cpu_metrics = CpuMetrics {
             total_usage: total_cpu,
@@ -252,11 +320,26 @@ impl TelemetryEngine {
             temperature_c: cpu_temp,
         };
 
-        // Memory
+        // Memory (with real Commit / Kernel Pool / System Cache via K32GetPerformanceInfo)
         let total_mem = self.sys.total_memory();
         let used_mem = self.sys.used_memory();
         let avail_mem = self.sys.available_memory();
-        let cached_mem = total_mem.saturating_sub(used_mem).min(avail_mem / 2);
+        let perf_mem = query_perf_memory_info();
+        let cached_mem = perf_mem
+            .as_ref()
+            .map(|p| p.system_cache_bytes)
+            .unwrap_or_else(|| total_mem.saturating_sub(used_mem).min(avail_mem / 2));
+        let (commit_total_bytes, commit_limit_bytes, paged_pool_bytes, non_paged_pool_bytes) =
+            perf_mem
+                .map(|p| {
+                    (
+                        p.commit_total_bytes,
+                        p.commit_limit_bytes,
+                        p.paged_pool_bytes,
+                        p.non_paged_pool_bytes,
+                    )
+                })
+                .unwrap_or((0, 0, 0, 0));
         let ram_percent = if total_mem > 0 {
             ((used_mem as f64 / total_mem as f64) * 100.0) as f32
         } else {
@@ -271,6 +354,10 @@ impl TelemetryEngine {
             usage_percent: ram_percent.clamp(0.0, 100.0),
             swap_used_bytes: self.sys.used_swap(),
             swap_total_bytes: self.sys.total_swap(),
+            commit_total_bytes,
+            commit_limit_bytes,
+            paged_pool_bytes,
+            non_paged_pool_bytes,
         };
 
         // Processes + aggregate disk I/O
@@ -283,15 +370,35 @@ impl TelemetryEngine {
             let pid_u32 = pid.as_u32();
             active_pids.insert(pid_u32);
 
-            let name = proc_.name().to_string_lossy().to_string();
-            let exe_path = proc_
-                .exe()
-                .map(|p| p.to_string_lossy().to_string())
-                .unwrap_or_default();
-            let cmd_line = join_cmd(proc_.cmd());
-            let category = classify_process(&name, &exe_path, &cmd_line);
-            let subtitle = extract_subtitle(&name, &cmd_line, &exe_path);
-            let group_key = compute_group_key(&name);
+            let start_time = proc_.start_time();
+            let needs_meta = match self.proc_meta_cache.get(&pid_u32) {
+                Some(meta) => meta.start_time != start_time,
+                None => true,
+            };
+            if needs_meta {
+                let name = proc_.name().to_string_lossy().to_string();
+                let exe_path = proc_
+                    .exe()
+                    .map(|p| p.to_string_lossy().to_string())
+                    .unwrap_or_default();
+                let cmd_line = join_cmd(proc_.cmd());
+                let category = classify_process(&name, &exe_path, &cmd_line);
+                let subtitle = extract_subtitle(&name, &cmd_line, &exe_path);
+                let group_key = compute_group_key(&name);
+                self.proc_meta_cache.insert(
+                    pid_u32,
+                    CachedProcMeta {
+                        start_time,
+                        name,
+                        exe_path,
+                        cmd_line,
+                        category,
+                        subtitle,
+                        group_key,
+                    },
+                );
+            }
+            let meta = &self.proc_meta_cache[&pid_u32];
 
             let win_info = win_snap.per_pid.get(&pid_u32);
             let cpu_percent = win_info
@@ -316,16 +423,6 @@ impl TelemetryEngine {
             total_disk_read = total_disk_read.saturating_add(disk_read_sec);
             total_disk_write = total_disk_write.saturating_add(disk_write_sec);
 
-            // Sparkline ring buffer per PID
-            let hist = self
-                .proc_cpu_history
-                .entry(pid_u32)
-                .or_insert_with(|| VecDeque::with_capacity(MAX_SPARKLINE_POINTS));
-            if hist.len() >= MAX_SPARKLINE_POINTS {
-                hist.pop_front();
-            }
-            hist.push_back((cpu_percent * 10.0).round() / 10.0);
-
             let handle_count = win_info
                 .map(|w| w.handle_count)
                 .or_else(|| process_ops::get_process_handle_count(pid_u32));
@@ -342,10 +439,10 @@ impl TelemetryEngine {
             processes.push(ProcessEntry {
                 pid: pid_u32,
                 parent_pid: proc_.parent().map(|p| p.as_u32()),
-                name,
-                group_key,
-                subtitle,
-                category,
+                name: meta.name.clone(),
+                group_key: meta.group_key.clone(),
+                subtitle: meta.subtitle.clone(),
+                category: meta.category.clone(),
                 cpu_percent: (cpu_percent * 10.0).round() / 10.0,
                 gpu_percent,
                 memory_bytes: mem_bytes,
@@ -357,16 +454,16 @@ impl TelemetryEngine {
                 is_suspended,
                 is_efficiency_mode,
                 run_time_seconds: proc_.run_time(),
-                exe_path,
-                cmd_line,
+                exe_path: meta.exe_path.clone(),
+                cmd_line: meta.cmd_line.clone(),
                 handle_count,
                 thread_count,
-                cpu_history: hist.iter().copied().collect(),
+                cpu_history: Vec::new(),
             });
         }
 
         // Cleanup exited PIDs from caches
-        self.proc_cpu_history.retain(|k, _| active_pids.contains(k));
+        self.proc_meta_cache.retain(|k, _| active_pids.contains(k));
         self.suspended_pids.retain(|k| active_pids.contains(k));
         self.efficiency_pids.retain(|k| active_pids.contains(k));
         self.profile_managed_pids
@@ -481,24 +578,19 @@ impl TelemetryEngine {
             interfaces,
         };
 
-        // Active TCP/UDP connections per PID (native IP Helper table, < 1ms)
-        let empty_map = HashMap::new();
-        let conns = network::list_connections(&empty_map);
-        let mut net_per_pid: HashMap<u32, (u32, u32)> = HashMap::new();
-        let mut listening_total = 0usize;
-        for c in &conns {
-            let entry = net_per_pid.entry(c.pid).or_insert((0, 0));
-            if c.state == "LISTENING" {
-                listening_total += 1;
-                entry.1 += 1;
-            } else if c.state == "ESTABLISHED" {
-                entry.0 += 1;
-            }
+        // Active TCP/UDP connection counts per PID (lightweight IP Helper scan, refreshed every 2 ticks)
+        if self.tick_count == 1 || self.tick_count % 2 == 1 {
+            self.cached_net_per_pid = network::count_connections_per_pid();
+            self.last_listening_ports = self
+                .cached_net_per_pid
+                .values()
+                .map(|&(listening, _)| listening as usize)
+                .sum();
         }
-        self.last_listening_ports = listening_total;
+        let net_per_pid = &self.cached_net_per_pid;
 
         let to_blame = |p: &ProcessEntry| -> BlameProcess {
-            let (established, listening) = net_per_pid.get(&p.pid).copied().unwrap_or((0, 0));
+            let (listening, established) = net_per_pid.get(&p.pid).copied().unwrap_or((0, 0));
             BlameProcess {
                 pid: p.pid,
                 name: p.name.clone(),
@@ -515,21 +607,29 @@ impl TelemetryEngine {
             }
         };
 
-        // Top 8 blame snapshots per metric for Spike-Blame & Range Analytics
+        // Top 5 blame snapshots per metric for Spike-Blame & Range Analytics (zero Vec<ProcessEntry> clones)
         let accounted_cpu: f32 = processes.iter().map(|p| p.cpu_percent).sum();
         let unaccounted_cpu = ((total_cpu - accounted_cpu).max(0.0) * 10.0).round() / 10.0;
 
-        let mut by_cpu = processes.clone();
+        let mut by_cpu: Vec<&ProcessEntry> = processes.iter().collect();
         by_cpu.sort_by(|a, b| {
             b.cpu_percent
                 .partial_cmp(&a.cpu_percent)
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
-        let top_cpu: Vec<BlameProcess> = by_cpu.iter().take(8).map(to_blame).collect();
+        let top_cpu: Vec<BlameProcess> = by_cpu
+            .into_iter()
+            .take(TOP_BLAME_LIMIT)
+            .map(to_blame)
+            .collect();
 
-        let mut by_ram = processes.clone();
+        let mut by_ram: Vec<&ProcessEntry> = processes.iter().collect();
         by_ram.sort_by(|a, b| b.memory_bytes.cmp(&a.memory_bytes));
-        let top_ram: Vec<BlameProcess> = by_ram.iter().take(8).map(to_blame).collect();
+        let top_ram: Vec<BlameProcess> = by_ram
+            .into_iter()
+            .take(TOP_BLAME_LIMIT)
+            .map(to_blame)
+            .collect();
 
         let mut by_gpu: Vec<&ProcessEntry> = processes
             .iter()
@@ -540,7 +640,11 @@ impl TelemetryEngine {
                 .partial_cmp(&a.gpu_percent)
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
-        let top_gpu: Vec<BlameProcess> = by_gpu.into_iter().take(8).map(to_blame).collect();
+        let top_gpu: Vec<BlameProcess> = by_gpu
+            .into_iter()
+            .take(TOP_BLAME_LIMIT)
+            .map(to_blame)
+            .collect();
 
         let mut by_disk: Vec<&ProcessEntry> = processes
             .iter()
@@ -550,21 +654,29 @@ impl TelemetryEngine {
             (b.disk_read_bytes_per_sec + b.disk_write_bytes_per_sec)
                 .cmp(&(a.disk_read_bytes_per_sec + a.disk_write_bytes_per_sec))
         });
-        let top_disk: Vec<BlameProcess> = by_disk.into_iter().take(8).map(to_blame).collect();
+        let top_disk: Vec<BlameProcess> = by_disk
+            .into_iter()
+            .take(TOP_BLAME_LIMIT)
+            .map(to_blame)
+            .collect();
 
         let mut by_net: Vec<&ProcessEntry> = processes
             .iter()
             .filter(|p| {
-                let (est, lis) = net_per_pid.get(&p.pid).copied().unwrap_or((0, 0));
+                let (lis, est) = net_per_pid.get(&p.pid).copied().unwrap_or((0, 0));
                 est > 0 || lis > 0
             })
             .collect();
         by_net.sort_by(|a, b| {
-            let (ae, al) = net_per_pid.get(&a.pid).copied().unwrap_or((0, 0));
-            let (be, bl) = net_per_pid.get(&b.pid).copied().unwrap_or((0, 0));
+            let (al, ae) = net_per_pid.get(&a.pid).copied().unwrap_or((0, 0));
+            let (bl, be) = net_per_pid.get(&b.pid).copied().unwrap_or((0, 0));
             be.cmp(&ae).then_with(|| bl.cmp(&al))
         });
-        let top_net: Vec<BlameProcess> = by_net.into_iter().take(8).map(to_blame).collect();
+        let top_net: Vec<BlameProcess> = by_net
+            .into_iter()
+            .take(TOP_BLAME_LIMIT)
+            .map(to_blame)
+            .collect();
 
         // Detect Spikes dynamically against rolling average of last 10 points
         let avg_recent_cpu = if self.history.len() >= 5 {
@@ -650,10 +762,8 @@ impl TelemetryEngine {
             .count();
 
         let system_summary = SystemSummary {
-            hostname: System::host_name().unwrap_or_else(|| "Windows PC".to_string()),
-            os_name: System::long_os_version()
-                .or_else(System::name)
-                .unwrap_or_else(|| "Windows".to_string()),
+            hostname: self.cached_hostname.clone(),
+            os_name: self.cached_os_name.clone(),
             uptime_seconds: System::uptime(),
             process_count: processes.len(),
             listening_ports_count: self.last_listening_ports,
@@ -957,6 +1067,42 @@ fn query_battery() -> BatteryMetrics {
         is_ac_plugged: true,
         remaining_seconds: None,
     }
+}
+
+struct PerfMemoryInfo {
+    system_cache_bytes: u64,
+    commit_total_bytes: u64,
+    commit_limit_bytes: u64,
+    paged_pool_bytes: u64,
+    non_paged_pool_bytes: u64,
+}
+
+#[cfg(windows)]
+fn query_perf_memory_info() -> Option<PerfMemoryInfo> {
+    use windows::Win32::System::ProcessStatus::{K32GetPerformanceInfo, PERFORMANCE_INFORMATION};
+
+    unsafe {
+        let mut info = PERFORMANCE_INFORMATION {
+            cb: std::mem::size_of::<PERFORMANCE_INFORMATION>() as u32,
+            ..Default::default()
+        };
+        if K32GetPerformanceInfo(&mut info, info.cb).as_bool() {
+            let page_size = info.PageSize as u64;
+            return Some(PerfMemoryInfo {
+                system_cache_bytes: (info.SystemCache as u64).saturating_mul(page_size),
+                commit_total_bytes: (info.CommitTotal as u64).saturating_mul(page_size),
+                commit_limit_bytes: (info.CommitLimit as u64).saturating_mul(page_size),
+                paged_pool_bytes: (info.KernelPaged as u64).saturating_mul(page_size),
+                non_paged_pool_bytes: (info.KernelNonpaged as u64).saturating_mul(page_size),
+            });
+        }
+    }
+    None
+}
+
+#[cfg(not(windows))]
+fn query_perf_memory_info() -> Option<PerfMemoryInfo> {
+    None
 }
 
 #[cfg(not(windows))]
