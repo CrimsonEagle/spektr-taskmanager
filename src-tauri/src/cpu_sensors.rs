@@ -86,6 +86,9 @@ mod win_impl {
         array_buf: Vec<u8>,
         cached_base_mhz: u64,
         cached_per_core_base: HashMap<(u32, u32), u64>,
+        acpi_first_temp: Option<f32>,
+        acpi_temp_has_changed: bool,
+        acpi_static_ticks: u32,
     }
 
     impl Drop for PdhCpuCounters {
@@ -155,6 +158,9 @@ mod win_impl {
                     array_buf: Vec::new(),
                     cached_base_mhz: 0,
                     cached_per_core_base: HashMap::new(),
+                    acpi_first_temp: None,
+                    acpi_temp_has_changed: false,
+                    acpi_static_ticks: 0,
                 })
             }
         }
@@ -292,7 +298,9 @@ mod win_impl {
                 }
             }
 
-            // ACPI Thermal Zone Temperature (PDH reports Kelvin or deci-Kelvin)
+            // ACPI Thermal Zone Temperature (PDH reports Kelvin or deci-Kelvin).
+            // Desktop motherboards commonly ship a hardcoded BIOS ACPI stub (e.g. 301.0K = 27.85°C)
+            // that never changes under load. Filter known stub values and frozen readings!
             let mut thermal_temp: Option<f32> = None;
             let thermal_counter = self.thermal_hi_prec.or(self.thermal_std);
             if let Some(c) = thermal_counter {
@@ -308,7 +316,7 @@ mod win_impl {
                     } else {
                         continue;
                     };
-                    if !(10.0..=120.0).contains(&celsius) {
+                    if !(10.0..=120.0).contains(&celsius) || is_acpi_dummy_celsius(celsius as f32) {
                         continue;
                     }
                     let lower = name.to_lowercase();
@@ -327,7 +335,28 @@ mod win_impl {
                         best_val = Some(c_f32);
                     }
                 }
-                thermal_temp = best_val;
+                if let Some(val) = best_val {
+                    match self.acpi_first_temp {
+                        None => {
+                            self.acpi_first_temp = Some(val);
+                            self.acpi_static_ticks = 1;
+                        }
+                        Some(first) => {
+                            if (val - first).abs() >= 0.4 {
+                                self.acpi_temp_has_changed = true;
+                            } else {
+                                self.acpi_static_ticks = self.acpi_static_ticks.saturating_add(1);
+                            }
+                        }
+                    }
+                    // Suppress suspiciously low/frozen ACPI readings that never move across ticks
+                    let looks_frozen_stub = !self.acpi_temp_has_changed
+                        && ((val <= 33.0 && self.acpi_static_ticks >= 3)
+                            || self.acpi_static_ticks >= 15);
+                    if !looks_frozen_stub {
+                        thermal_temp = Some(val);
+                    }
+                }
             }
 
             // Windows PDH Power Meter (milliwatts -> Watts)
@@ -752,32 +781,56 @@ mod win_impl {
         out
     }
 
-    fn is_cpu_power_channel(name_lower: &str) -> u8 {
+    pub fn is_acpi_dummy_celsius(c: f32) -> bool {
+        // Known hardcoded Intel/AMI/UEFI desktop DSDT ACPI _TMP stub constants:
+        // 301.0 K = 27.85°C (0x0BC2 — by far the most common Intel desktop BIOS stub!)
+        // 300.0 K = 26.85°C (0x0BB8)
+        // 303.0 K = 29.85°C (0x0BD6)
+        // 298.2 K = 25.05°C (0x0BA6)
+        // 290.0 K = 16.85°C (0x0B54)
+        const STUBS: [f32; 5] = [27.85, 26.85, 29.85, 25.05, 16.85];
+        STUBS.iter().any(|&stub| (c - stub).abs() < 0.16)
+    }
+
+    pub(crate) fn is_cpu_power_channel(name_lower: &str) -> u8 {
+        // Exclude non-package / sub-domain / memory / GPU / total-platform channels
         if name_lower.contains("dram")
+            || name_lower.contains("dimm")
             || name_lower.contains("pp1")
             || name_lower.contains("gpu")
             || name_lower.contains("gt_")
+            || name_lower.contains("psys")
+            || name_lower.contains("platform")
             || name_lower.contains("display")
             || name_lower.contains("battery")
         {
             return 0;
         }
-        // Best: RAPL Package total (Intel & AMD RAPL EMI driver)
-        if name_lower.contains("_pkg")
-            || name_lower.ends_with("pkg")
-            || name_lower.contains("package")
-            || name_lower.contains("ppt")
-        {
-            return 3;
-        }
-        // Fallback: CPU cores / PP0 / SoC
-        if name_lower.contains("pp0")
-            || name_lower.contains("rapl")
-            || name_lower.contains("cpu")
-            || name_lower.contains("processor")
-            || name_lower.contains("core")
+        // IMPORTANT: Check PP0 / Cores BEFORE "package"!
+        // Windows RAPL EMI names the core sub-domain "RAPL_Package0_PP0", which ALSO contains
+        // "package". Giving PP0 lower priority (2) than PKG (4) prevents summing PKG + PP0
+        // (which would otherwise double-count CPU wattage!).
+        if name_lower.contains("_pp0")
+            || name_lower.ends_with("pp0")
+            || name_lower.contains("ia_cores")
+            || name_lower.contains("_core")
         {
             return 2;
+        }
+        // Best: RAPL Package total (e.g. "RAPL_Package0_PKG", AMD "PPT")
+        if name_lower.contains("_pkg")
+            || name_lower.ends_with("pkg")
+            || name_lower.contains("ppt")
+            || name_lower.contains("package")
+        {
+            return 4;
+        }
+        // Generic CPU fallback
+        if name_lower.contains("rapl")
+            || name_lower.contains("cpu")
+            || name_lower.contains("processor")
+        {
+            return 1;
         }
         0
     }
@@ -1290,10 +1343,16 @@ mod win_impl {
 }
 
 #[cfg(windows)]
-pub use win_impl::CpuSensorCollector;
+pub use win_impl::{is_acpi_dummy_celsius, CpuSensorCollector};
+
+#[cfg(not(windows))]
+pub fn is_acpi_dummy_celsius(_c: f32) -> bool {
+    false
+}
 
 #[cfg(all(test, windows))]
 mod tests {
+    use super::win_impl::{is_acpi_dummy_celsius, is_cpu_power_channel};
     use super::CpuSensorCollector;
 
     #[test]
@@ -1303,5 +1362,28 @@ mod tests {
         assert!(reading.effective_freq_mhz.map_or(true, |f| (300..=10000).contains(&f)));
         assert!(reading.temperature_c.map_or(true, |t| (5.0..=125.0).contains(&t)));
         assert!(reading.power_watts.map_or(true, |w| (0.1..=600.0).contains(&w)));
+    }
+
+    #[test]
+    fn rapl_pkg_beats_pp0_so_power_is_never_double_counted() {
+        let pkg = is_cpu_power_channel("rapl_package0_pkg");
+        let pp0 = is_cpu_power_channel("rapl_package0_pp0");
+        let pp1 = is_cpu_power_channel("rapl_package0_pp1");
+        let dram = is_cpu_power_channel("rapl_package0_dram");
+        let psys = is_cpu_power_channel("rapl_package0_psys");
+        assert!(pkg > pp0);
+        assert!(pp0 > 0);
+        assert_eq!(pp1, 0);
+        assert_eq!(dram, 0);
+        assert_eq!(psys, 0);
+    }
+
+    #[test]
+    fn filters_known_intel_acpi_dummy_stubs() {
+        assert!(is_acpi_dummy_celsius(27.85));
+        assert!(is_acpi_dummy_celsius(27.9));
+        assert!(is_acpi_dummy_celsius(26.85));
+        assert!(!is_acpi_dummy_celsius(45.2));
+        assert!(!is_acpi_dummy_celsius(68.0));
     }
 }

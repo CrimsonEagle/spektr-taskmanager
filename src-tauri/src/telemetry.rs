@@ -1,4 +1,4 @@
-use crate::cpu_sensors::CpuSensorCollector;
+use crate::cpu_sensors::{is_acpi_dummy_celsius, CpuSensorCollector};
 use crate::disk_sensors::{normalize_drive_key, DiskSensorCollector};
 use crate::gpu::GpuCollector;
 use crate::models::{
@@ -318,6 +318,7 @@ impl TelemetryEngine {
                     l.contains("cpu") || l.contains("package") || l.contains("core")
                 })
                 .and_then(|c| c.temperature())
+                .filter(|&t| (10.0..=120.0).contains(&t) && !is_acpi_dummy_celsius(t))
         } else {
             None
         };
