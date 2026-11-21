@@ -93,6 +93,7 @@ export interface NetworkMetrics {
   totalTxBytes: number;
   primaryInterface: string;
   interfaces: NetworkInterfaceInfo[];
+  perProcessAvailable?: boolean;
 }
 
 export interface BatteryMetrics {
@@ -136,6 +137,8 @@ export interface ProcessEntry {
   diskWriteBytesPerSec: number;
   totalDiskReadBytes: number;
   totalDiskWriteBytes: number;
+  netRxBytesPerSec: number;
+  netTxBytesPerSec: number;
   status: string;
   isSuspended: boolean;
   isEfficiencyMode: boolean;
@@ -156,6 +159,8 @@ export interface BlameProcess {
   gpuPercent: number;
   memoryBytes: number;
   diskBytesPerSec: number;
+  netRxBytesPerSec?: number;
+  netTxBytesPerSec?: number;
   netConnections: number;
   netListeningPorts: number;
 }
@@ -323,4 +328,11 @@ export interface RuleAlertEvent {
   pid: number;
   message: string;
   timestamp: number;
+}
+
+export type AutostartMode = "normal" | "maximized" | "minimized";
+
+export interface AutostartConfig {
+  enabled: boolean;
+  mode: AutostartMode;
 }

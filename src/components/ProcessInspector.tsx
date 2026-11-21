@@ -995,6 +995,24 @@ export const ProcessInspector: React.FC<ProcessInspectorProps> = React.memo(
                     </div>
                     <div className="flex justify-between">
                       <span style={{ color: "var(--text-muted)" }}>
+                        Netzwerk ↓ / ↑
+                      </span>
+                      <span
+                        className="font-medium tabular-nums"
+                        style={{
+                          color:
+                            process.netRxBytesPerSec + process.netTxBytesPerSec >= 100
+                              ? "var(--accent-net)"
+                              : undefined,
+                        }}
+                      >
+                        {process.netRxBytesPerSec + process.netTxBytesPerSec >= 100
+                          ? `${formatSpeed(process.netRxBytesPerSec)} / ${formatSpeed(process.netTxBytesPerSec)}`
+                          : "–"}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span style={{ color: "var(--text-muted)" }}>
                         Gesamt-I/O (R / W)
                       </span>
                       <span className="font-medium tabular-nums">

@@ -9,7 +9,10 @@ export function formatBytes(bytes: number, decimals = 1): string {
 }
 
 export function formatSpeed(bytesPerSec: number): string {
-  if (!Number.isFinite(bytesPerSec) || bytesPerSec < 10) return "0 KB/s";
+  if (!Number.isFinite(bytesPerSec) || bytesPerSec < 100) return "0 KB/s";
+  if (bytesPerSec < 10 * 1024) {
+    return `${(bytesPerSec / 1024).toFixed(1)} KB/s`;
+  }
   if (bytesPerSec < 1024 * 1024) {
     return `${(bytesPerSec / 1024).toFixed(0)} KB/s`;
   }

@@ -1,4 +1,4 @@
-import React, { useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { Monitor, Moon, Settings, Sun, X } from "lucide-react";
 import {
@@ -7,7 +7,8 @@ import {
   RefreshRateMs,
   TitleBarMetricsConfig,
 } from "../hooks/useSettings";
-import { ThemePreference } from "../types/telemetry";
+import { api } from "../lib/tauri";
+import { ActionResult, AutostartMode, ThemePreference } from "../types/telemetry";
 
 interface SettingsModalProps {
   settings: AppSettings;
@@ -18,8 +19,15 @@ interface SettingsModalProps {
   onSetTrayCpuIcon: (enabled: boolean) => void;
   onToggleTitleBarMetric: (key: keyof TitleBarMetricsConfig) => void;
   onToggleHudMetric: (key: keyof HudMetricsConfig) => void;
+  onActionFeedback?: (res: ActionResult) => void;
   onClose: () => void;
 }
+
+const AUTOSTART_MODES: { id: AutostartMode; label: string }[] = [
+  { id: "normal", label: "Normal" },
+  { id: "maximized", label: "Maximiert" },
+  { id: "minimized", label: "Minimiert (Tray)" },
+];
 
 const REFRESH_OPTIONS: { ms: RefreshRateMs; label: string }[] = [
   { ms: 500, label: "0.5s" },
@@ -77,8 +85,74 @@ export const SettingsModal: React.FC<SettingsModalProps> = React.memo(
     onSetTrayCpuIcon,
     onToggleTitleBarMetric,
     onToggleHudMetric,
+    onActionFeedback,
     onClose,
   }) => {
+    const [autostartEnabled, setAutostartEnabled] = useState(false);
+    const [autostartMode, setAutostartMode] =
+      useState<AutostartMode>("minimized");
+    const [autostartBusy, setAutostartBusy] = useState(false);
+
+    useEffect(() => {
+      let active = true;
+      api
+        .getAutostartConfig()
+        .then((cfg) => {
+          if (!active) return;
+          setAutostartEnabled(cfg.enabled);
+          if (
+            cfg.mode === "normal" ||
+            cfg.mode === "maximized" ||
+            cfg.mode === "minimized"
+          ) {
+            setAutostartMode(cfg.mode);
+          }
+        })
+        .catch(() => {});
+      return () => {
+        active = false;
+      };
+    }, []);
+
+    const updateAutostart = async (
+      nextEnabled: boolean,
+      nextMode: AutostartMode
+    ) => {
+      if (autostartBusy) return;
+      setAutostartBusy(true);
+      try {
+        const saved = await api.setAutostartConfig(nextEnabled, nextMode);
+        setAutostartEnabled(saved.enabled);
+        setAutostartMode(saved.mode);
+        const modeLabel =
+          saved.mode === "maximized"
+            ? "Maximiert"
+            : saved.mode === "minimized"
+              ? "Minimiert im Tray"
+              : "Normal";
+        onActionFeedback?.({
+          ok: true,
+          message: saved.enabled
+            ? `Windows-Autostart aktiviert (${modeLabel}).`
+            : "Windows-Autostart deaktiviert.",
+        });
+      } catch (err) {
+        onActionFeedback?.({
+          ok: false,
+          message: `Autostart konnte nicht geändert werden: ${String(err)}`,
+        });
+      } finally {
+        setAutostartBusy(false);
+      }
+    };
+
+    const handleSelectAutostartMode = (mode: AutostartMode) => {
+      setAutostartMode(mode);
+      if (autostartEnabled) {
+        updateAutostart(true, mode);
+      }
+    };
+
     useEffect(() => {
       const onKey = (e: KeyboardEvent) => {
         if (e.key === "Escape") onClose();
@@ -190,6 +264,80 @@ export const SettingsModal: React.FC<SettingsModalProps> = React.memo(
                       </button>
                     );
                   })}
+                </div>
+              </div>
+
+              {/* Windows Autostart & Start Mode */}
+              <div
+                className="p-3 rounded-xl border flex flex-col gap-2.5"
+                style={{
+                  backgroundColor: "var(--bg-subtle)",
+                  borderColor: "var(--border-subtle)",
+                }}
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <div className="font-semibold">
+                      Mit Windows starten (Autostart)
+                    </div>
+                    <div
+                      className="text-[11px]"
+                      style={{ color: "var(--text-muted)" }}
+                    >
+                      Automatisch bei der Windows-Anmeldung starten
+                    </div>
+                  </div>
+                  <ToggleSwitch
+                    checked={autostartEnabled}
+                    onChange={() =>
+                      updateAutostart(!autostartEnabled, autostartMode)
+                    }
+                    label="Mit Windows starten (Autostart)"
+                  />
+                </div>
+
+                <div
+                  className={`flex items-center justify-between gap-3 pt-2 border-t transition-opacity ${
+                    autostartEnabled ? "opacity-100" : "opacity-55"
+                  }`}
+                  style={{ borderColor: "var(--border-subtle)" }}
+                >
+                  <span
+                    className="text-[11px] font-medium"
+                    style={{ color: "var(--text-secondary)" }}
+                  >
+                    Startmodus beim Autostart
+                  </span>
+                  <div
+                    className="flex items-center p-0.5 rounded-lg border gap-0.5 shrink-0"
+                    style={{
+                      backgroundColor: "var(--bg-surface-solid)",
+                      borderColor: "var(--border-subtle)",
+                    }}
+                  >
+                    {AUTOSTART_MODES.map((m) => {
+                      const active = autostartMode === m.id;
+                      return (
+                        <button
+                          key={m.id}
+                          type="button"
+                          disabled={autostartBusy}
+                          onClick={() => handleSelectAutostartMode(m.id)}
+                          className="px-2 py-1 rounded-md text-[11px] font-semibold cursor-pointer transition-colors disabled:opacity-50"
+                          style={{
+                            backgroundColor: active
+                              ? "var(--accent-cpu-soft)"
+                              : "transparent",
+                            color: active
+                              ? "var(--accent-cpu)"
+                              : "var(--text-secondary)",
+                          }}
+                        >
+                          {m.label}
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
               </div>
 

@@ -64,6 +64,8 @@ function blameToArchivedProcess(bp: BlameProcess): ProcessEntry {
     diskWriteBytesPerSec: 0,
     totalDiskReadBytes: 0,
     totalDiskWriteBytes: 0,
+    netRxBytesPerSec: bp.netRxBytesPerSec ?? 0,
+    netTxBytesPerSec: bp.netTxBytesPerSec ?? 0,
     status: "Beendet",
     isSuspended: false,
     isEfficiencyMode: false,
@@ -505,11 +507,13 @@ export function App() {
                   <ProcessesView
                     processes={snapshot.processes}
                     totalMemoryBytes={snapshot.memory.totalBytes}
+                    netPerProcessAvailable={snapshot.network.perProcessAvailable ?? false}
                     selectedPid={selectedPid}
                     searchFocusNonce={searchFocusNonce}
                     pickingWindow={pickingWindow}
                     onPickWindow={handlePickWindow}
                     onSelectPid={handleSelectPid}
+                    onRestartAsAdmin={handleRestartAsAdmin}
                     onActionFeedback={handleActionFeedback}
                   />
                 )}
@@ -523,6 +527,7 @@ export function App() {
                     initialSpikeTimestamp={jumpSpikeTs}
                     onClearInitialSpike={handleClearInitialSpike}
                     onInspectPid={handleSelectPid}
+                    onRestartAsAdmin={handleRestartAsAdmin}
                     onActionFeedback={handleActionFeedback}
                   />
                 )}
@@ -598,6 +603,7 @@ export function App() {
             onSetTrayCpuIcon={setTrayCpuIcon}
             onToggleTitleBarMetric={toggleTitleBarMetric}
             onToggleHudMetric={toggleHudMetric}
+            onActionFeedback={handleActionFeedback}
             onClose={handleCloseSettings}
           />
         )}

@@ -18,6 +18,7 @@ import {
   Play,
   RotateCw,
   Search,
+  Shield,
   Skull,
   Snowflake,
   Trash2,
@@ -44,16 +45,18 @@ import {
 interface ProcessesViewProps {
   processes: ProcessEntry[];
   totalMemoryBytes: number;
+  netPerProcessAvailable?: boolean;
   selectedPid: number | null;
   searchFocusNonce?: number;
   pickingWindow?: boolean;
   onPickWindow?: () => void;
   onSelectPid: (pid: number) => void;
+  onRestartAsAdmin?: () => void;
   onActionFeedback: (res: ActionResult) => void;
 }
 
 type ViewMode = "grouped" | "tree" | "flat";
-type SortField = "name" | "cpu" | "gpu" | "memory" | "disk";
+type SortField = "name" | "cpu" | "gpu" | "memory" | "disk" | "network";
 type CategoryFilter = "all" | ProcessCategory | "high";
 
 interface ProcessGroup {
@@ -63,6 +66,9 @@ interface ProcessGroup {
   gpuPercent: number;
   memoryBytes: number;
   diskBytesPerSec: number;
+  netBytesPerSec: number;
+  netRxBytesPerSec: number;
+  netTxBytesPerSec: number;
   items: ProcessEntry[];
 }
 
@@ -84,7 +90,7 @@ interface ContextMenuState {
 const ROW_HEIGHT = 48;
 const OVERSCAN = 6;
 const GRID_COLS =
-  "grid-cols-[minmax(200px,1fr)_128px_68px_112px_88px_72px]";
+  "grid-cols-[minmax(160px,1fr)_116px_58px_98px_82px_84px_64px]";
 
 interface ProcessRowItemProps {
   proc: ProcessEntry;
@@ -112,6 +118,9 @@ const ProcessRowItem: React.FC<ProcessRowItemProps> = React.memo(
   }) => {
     const cat = getCategoryMeta(proc.category);
     const diskTotal = proc.diskReadBytesPerSec + proc.diskWriteBytesPerSec;
+    const netRx = proc.netRxBytesPerSec ?? 0;
+    const netTx = proc.netTxBytesPerSec ?? 0;
+    const netTotal = netRx + netTx;
     const ramPct =
       totalMemoryBytes > 0 ? (proc.memoryBytes / totalMemoryBytes) * 100 : 0;
 
@@ -271,6 +280,26 @@ const ProcessRowItem: React.FC<ProcessRowItemProps> = React.memo(
           {diskTotal > 1024 ? formatSpeed(diskTotal) : "–"}
         </div>
 
+        {/* Network Throughput */}
+        <div
+          className="text-right tabular-nums font-medium"
+          style={{
+            color:
+              netTotal >= 100 * 1024
+                ? "var(--accent-net)"
+                : netTotal >= 100
+                  ? "var(--text-primary)"
+                  : "var(--text-muted)",
+          }}
+          title={
+            netTotal >= 100
+              ? `↓ ${formatSpeed(netRx)} · ↑ ${formatSpeed(netTx)}`
+              : undefined
+          }
+        >
+          {netTotal >= 100 ? formatSpeed(netTotal) : "–"}
+        </div>
+
         {/* Hover Quick Actions */}
         <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
           <button
@@ -412,6 +441,25 @@ const GroupRowItem: React.FC<GroupRowItemProps> = React.memo(
         </div>
 
         <div
+          className="text-right tabular-nums font-medium"
+          style={{
+            color:
+              group.netBytesPerSec >= 100 * 1024
+                ? "var(--accent-net)"
+                : group.netBytesPerSec >= 100
+                  ? "var(--text-primary)"
+                  : "var(--text-muted)",
+          }}
+          title={
+            group.netBytesPerSec >= 100
+              ? `↓ ${formatSpeed(group.netRxBytesPerSec)} · ↑ ${formatSpeed(group.netTxBytesPerSec)}`
+              : undefined
+          }
+        >
+          {group.netBytesPerSec >= 100 ? formatSpeed(group.netBytesPerSec) : "–"}
+        </div>
+
+        <div
           className="text-right text-[11px]"
           style={{ color: "var(--text-muted)" }}
         >
@@ -428,11 +476,13 @@ export const ProcessesView: React.FC<ProcessesViewProps> = React.memo(
   ({
     processes,
     totalMemoryBytes,
+    netPerProcessAvailable = false,
     selectedPid,
     searchFocusNonce = 0,
     pickingWindow = false,
     onPickWindow,
     onSelectPid,
+    onRestartAsAdmin,
     onActionFeedback,
   }) => {
     const [search, setSearch] = useState("");
@@ -525,7 +575,8 @@ export const ProcessesView: React.FC<ProcessesViewProps> = React.memo(
           if (
             p.cpuPercent < 3 &&
             p.gpuPercent < 5 &&
-            p.memoryBytes < 300 * 1024 * 1024
+            p.memoryBytes < 300 * 1024 * 1024 &&
+            (p.netRxBytesPerSec ?? 0) + (p.netTxBytesPerSec ?? 0) < 256 * 1024
           ) {
             return false;
           }
@@ -550,7 +601,12 @@ export const ProcessesView: React.FC<ProcessesViewProps> = React.memo(
         else if (sortField === "cpu") cmp = a.cpuPercent - b.cpuPercent;
         else if (sortField === "gpu") cmp = a.gpuPercent - b.gpuPercent;
         else if (sortField === "memory") cmp = a.memoryBytes - b.memoryBytes;
-        else {
+        else if (sortField === "network") {
+          cmp =
+            (a.netRxBytesPerSec ?? 0) +
+            (a.netTxBytesPerSec ?? 0) -
+            ((b.netRxBytesPerSec ?? 0) + (b.netTxBytesPerSec ?? 0));
+        } else {
           cmp =
             a.diskReadBytesPerSec +
             a.diskWriteBytesPerSec -
@@ -595,12 +651,16 @@ export const ProcessesView: React.FC<ProcessesViewProps> = React.memo(
         let gpuPercent = 0;
         let memoryBytes = 0;
         let diskBytesPerSec = 0;
+        let netRxBytesPerSec = 0;
+        let netTxBytesPerSec = 0;
         for (let i = 0; i < items.length; i++) {
           const x = items[i];
           cpuPercent += x.cpuPercent;
           gpuPercent += x.gpuPercent;
           memoryBytes += x.memoryBytes;
           diskBytesPerSec += x.diskReadBytesPerSec + x.diskWriteBytesPerSec;
+          netRxBytesPerSec += x.netRxBytesPerSec ?? 0;
+          netTxBytesPerSec += x.netTxBytesPerSec ?? 0;
         }
         groups.push({
           key,
@@ -609,6 +669,9 @@ export const ProcessesView: React.FC<ProcessesViewProps> = React.memo(
           gpuPercent,
           memoryBytes,
           diskBytesPerSec,
+          netBytesPerSec: netRxBytesPerSec + netTxBytesPerSec,
+          netRxBytesPerSec,
+          netTxBytesPerSec,
           items,
         });
       }
@@ -627,6 +690,7 @@ export const ProcessesView: React.FC<ProcessesViewProps> = React.memo(
           else if (sortField === "cpu") cmp = a.cpuPercent - b.cpuPercent;
           else if (sortField === "gpu") cmp = a.gpuPercent - b.gpuPercent;
           else if (sortField === "memory") cmp = a.memoryBytes - b.memoryBytes;
+          else if (sortField === "network") cmp = a.netBytesPerSec - b.netBytesPerSec;
           else cmp = a.diskBytesPerSec - b.diskBytesPerSec;
           return sortAsc ? cmp : -cmp;
         });
@@ -793,7 +857,7 @@ export const ProcessesView: React.FC<ProcessesViewProps> = React.memo(
 
         const escapeCsv = (val: string) => `"${val.replace(/"/g, '""')}"`;
         const header =
-          "pid,name,category,cpu_percent,gpu_percent,memory_mb,disk_read_kb_s,disk_write_kb_s,status,exe_path";
+          "pid,name,category,cpu_percent,gpu_percent,memory_mb,disk_read_kb_s,disk_write_kb_s,net_rx_kb_s,net_tx_kb_s,status,exe_path";
         const rows = filtered.map((p) =>
           [
             p.pid,
@@ -804,6 +868,8 @@ export const ProcessesView: React.FC<ProcessesViewProps> = React.memo(
             (p.memoryBytes / (1024 * 1024)).toFixed(2),
             (p.diskReadBytesPerSec / 1024).toFixed(1),
             (p.diskWriteBytesPerSec / 1024).toFixed(1),
+            ((p.netRxBytesPerSec ?? 0) / 1024).toFixed(1),
+            ((p.netTxBytesPerSec ?? 0) / 1024).toFixed(1),
             escapeCsv(p.status),
             escapeCsv(p.exePath),
           ].join(",")
@@ -1060,8 +1126,56 @@ export const ProcessesView: React.FC<ProcessesViewProps> = React.memo(
             >
               Disk I/O {renderSortIcon("disk")}
             </button>
+            <button
+              onClick={() => toggleSort("network")}
+              className="text-right cursor-pointer hover:text-[var(--text-primary)] inline-flex items-center justify-end gap-1"
+              title={
+                netPerProcessAvailable
+                  ? "Netzwerk-Datendurchsatz pro Prozess (Download + Upload)"
+                  : "Netzwerk-Datendurchsatz pro Prozess erfordert Administratorrechte (Windows ETW)"
+              }
+            >
+              {!netPerProcessAvailable && (
+                <Shield
+                  className="w-3 h-3 opacity-65 shrink-0"
+                  style={{ color: "var(--accent-net)" }}
+                />
+              )}
+              <span>Netzwerk</span>
+              {renderSortIcon("network")}
+            </button>
             <span className="text-right">Aktion</span>
           </div>
+
+          {!netPerProcessAvailable && sortField === "network" && (
+            <div
+              className="px-3.5 py-2 border-b text-[11px] flex items-center justify-between gap-2 shrink-0"
+              style={{
+                borderColor: "var(--border-subtle)",
+                backgroundColor: "var(--accent-net-soft)",
+                color: "var(--text-secondary)",
+              }}
+            >
+              <span className="flex items-center gap-1.5 min-w-0">
+                <Shield
+                  className="w-3.5 h-3.5 shrink-0"
+                  style={{ color: "var(--accent-net)" }}
+                />
+                <span className="truncate">
+                  Netzwerk-Datendurchsatz pro Prozess erfordert Administratorrechte (Windows Kernel-ETW).
+                </span>
+              </span>
+              {onRestartAsAdmin && (
+                <button
+                  onClick={onRestartAsAdmin}
+                  className="px-2.5 py-1 rounded-lg text-[11px] font-semibold text-white cursor-pointer shrink-0 hover:opacity-90"
+                  style={{ backgroundColor: "var(--accent-net)" }}
+                >
+                  Als Admin neu starten
+                </button>
+              )}
+            </div>
+          )}
 
           {/* Virtualized Table Body */}
           <div

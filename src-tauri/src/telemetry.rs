@@ -6,6 +6,7 @@ use crate::models::{
     MemoryMetrics, NetworkInterfaceInfo, NetworkMetrics, ProcessEntry, SystemSummary,
     TelemetrySnapshot,
 };
+use crate::net_etw::NetThroughputCollector;
 use crate::network;
 use crate::process_ops;
 use crate::win_cpu::WinCpuSampler;
@@ -16,7 +17,8 @@ use sysinfo::{
 };
 
 const MAX_HISTORY_POINTS: usize = 900; // 15 minutes at 1s interval
-const TOP_BLAME_LIMIT: usize = 5;
+const TOP_BLAME_LIMIT: usize = 15;
+const TOP_RAM_BLAME_LIMIT: usize = 30;
 
 struct CachedProcMeta {
     start_time: u64,
@@ -45,6 +47,7 @@ pub struct TelemetryEngine {
     disk_sensors: DiskSensorCollector,
     gpu: GpuCollector,
     win_cpu: WinCpuSampler,
+    net_etw: NetThroughputCollector,
     history: VecDeque<HistoryPoint>,
     proc_meta_cache: HashMap<u32, CachedProcMeta>,
     cached_hostname: String,
@@ -82,6 +85,7 @@ impl TelemetryEngine {
         let disk_sensors = DiskSensorCollector::new();
         let gpu = GpuCollector::new();
         let win_cpu = WinCpuSampler::new();
+        let net_etw = NetThroughputCollector::new();
 
         let cached_hostname = System::host_name().unwrap_or_else(|| "Windows PC".to_string());
         let cached_os_name = System::long_os_version()
@@ -104,6 +108,7 @@ impl TelemetryEngine {
             disk_sensors,
             gpu,
             win_cpu,
+            net_etw,
             history: VecDeque::with_capacity(MAX_HISTORY_POINTS + 1),
             proc_meta_cache: HashMap::new(),
             cached_hostname,
@@ -291,6 +296,8 @@ impl TelemetryEngine {
         }
 
         let (gpu_metrics, gpu_per_pid) = self.gpu.refresh();
+        let net_per_proc_available = self.net_etw.is_available();
+        let net_rates_per_pid = self.net_etw.sample();
 
         let cpus = self.sys.cpus();
         let logical_cores = cpus.len().max(1);
@@ -462,6 +469,11 @@ impl TelemetryEngine {
                 format!("{:?}", proc_.status())
             };
 
+            let (net_rx_sec, net_tx_sec) = net_rates_per_pid
+                .get(&pid_u32)
+                .copied()
+                .unwrap_or((0, 0));
+
             processes.push(ProcessEntry {
                 pid: pid_u32,
                 parent_pid: proc_.parent().map(|p| p.as_u32()),
@@ -476,6 +488,8 @@ impl TelemetryEngine {
                 disk_write_bytes_per_sec: disk_write_sec,
                 total_disk_read_bytes: total_disk_read_p,
                 total_disk_write_bytes: total_disk_write_p,
+                net_rx_bytes_per_sec: net_rx_sec,
+                net_tx_bytes_per_sec: net_tx_sec,
                 status: status_str,
                 is_suspended,
                 is_efficiency_mode,
@@ -624,6 +638,7 @@ impl TelemetryEngine {
                 primary_iface
             },
             interfaces,
+            per_process_available: net_per_proc_available,
         };
 
         // Active TCP/UDP connection counts per PID (lightweight IP Helper scan, refreshed every 2 ticks)
@@ -650,6 +665,8 @@ impl TelemetryEngine {
                 disk_bytes_per_sec: p
                     .disk_read_bytes_per_sec
                     .saturating_add(p.disk_write_bytes_per_sec),
+                net_rx_bytes_per_sec: p.net_rx_bytes_per_sec,
+                net_tx_bytes_per_sec: p.net_tx_bytes_per_sec,
                 net_connections: established,
                 net_listening_ports: listening,
             }
@@ -675,7 +692,7 @@ impl TelemetryEngine {
         by_ram.sort_by(|a, b| b.memory_bytes.cmp(&a.memory_bytes));
         let top_ram: Vec<BlameProcess> = by_ram
             .into_iter()
-            .take(TOP_BLAME_LIMIT)
+            .take(TOP_RAM_BLAME_LIMIT)
             .map(to_blame)
             .collect();
 
@@ -708,23 +725,28 @@ impl TelemetryEngine {
             .map(to_blame)
             .collect();
 
-        let mut by_net: Vec<&ProcessEntry> = processes
-            .iter()
-            .filter(|p| {
-                let (lis, est) = net_per_pid.get(&p.pid).copied().unwrap_or((0, 0));
-                est > 0 || lis > 0
-            })
-            .collect();
-        by_net.sort_by(|a, b| {
-            let (al, ae) = net_per_pid.get(&a.pid).copied().unwrap_or((0, 0));
-            let (bl, be) = net_per_pid.get(&b.pid).copied().unwrap_or((0, 0));
-            be.cmp(&ae).then_with(|| bl.cmp(&al))
-        });
-        let top_net: Vec<BlameProcess> = by_net
-            .into_iter()
-            .take(TOP_BLAME_LIMIT)
-            .map(to_blame)
-            .collect();
+        let top_net: Vec<BlameProcess> = if net_per_proc_available {
+            let mut by_net: Vec<&ProcessEntry> = processes
+                .iter()
+                .filter(|p| {
+                    p.net_rx_bytes_per_sec
+                        .saturating_add(p.net_tx_bytes_per_sec)
+                        > 0
+                })
+                .collect();
+            by_net.sort_by(|a, b| {
+                let b_tot = b.net_rx_bytes_per_sec.saturating_add(b.net_tx_bytes_per_sec);
+                let a_tot = a.net_rx_bytes_per_sec.saturating_add(a.net_tx_bytes_per_sec);
+                b_tot.cmp(&a_tot)
+            });
+            by_net
+                .into_iter()
+                .take(TOP_BLAME_LIMIT)
+                .map(to_blame)
+                .collect()
+        } else {
+            Vec::new()
+        };
 
         // Detect Spikes dynamically against rolling average of last 10 points
         let avg_recent_cpu = if self.history.len() >= 5 {

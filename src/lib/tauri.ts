@@ -4,6 +4,8 @@ import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import {
   ActionResult,
+  AutostartConfig,
+  AutostartMode,
   FileLockEntry,
   HistoryPoint,
   NetworkConnectionEntry,
@@ -105,6 +107,9 @@ export const api = {
   getStartupEntries: () => invoke<StartupEntry[]>("get_startup_entries"),
   toggleStartupEntry: (name: string, registrySubkey: string, enable: boolean) =>
     invoke<ActionResult>("toggle_startup_entry", { name, registrySubkey, enable }),
+  getAutostartConfig: () => invoke<AutostartConfig>("get_autostart_config"),
+  setAutostartConfig: (enabled: boolean, mode: AutostartMode) =>
+    invoke<AutostartConfig>("set_autostart_config", { enabled, mode }),
 
   getServices: () => invoke<ServiceEntry[]>("get_services"),
   controlService: (name: string, action: "start" | "stop" | "restart") =>

@@ -1,5 +1,213 @@
-use crate::models::{ActionResult, ServiceEntry, StartupEntry};
+use crate::models::{ActionResult, AutostartConfig, ServiceEntry, StartupEntry};
 use std::collections::HashMap;
+
+const AUTOSTART_VALUE_NAME: &str = "Pulse Taskmanager";
+const RUN_KEY_PATH: &str = "Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+const STARTUP_APPROVED_RUN_PATH: &str =
+    "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StartupApproved\\Run";
+
+fn normalize_autostart_mode(mode: &str) -> &'static str {
+    match mode {
+        "maximized" => "maximized",
+        "minimized" => "minimized",
+        _ => "normal",
+    }
+}
+
+#[cfg(windows)]
+pub fn get_autostart_config() -> AutostartConfig {
+    use std::ffi::c_void;
+    use windows::core::PCWSTR;
+    use windows::Win32::System::Registry::{
+        RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_SZ,
+    };
+
+    let wide_subkey: Vec<u16> = RUN_KEY_PATH
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
+    let wide_name: Vec<u16> = AUTOSTART_VALUE_NAME
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
+
+    let mut buf = [0u16; 1024];
+    let mut byte_len = (buf.len() * 2) as u32;
+
+    let ok = unsafe {
+        RegGetValueW(
+            HKEY_CURRENT_USER,
+            PCWSTR(wide_subkey.as_ptr()),
+            PCWSTR(wide_name.as_ptr()),
+            RRF_RT_REG_SZ,
+            None,
+            Some(buf.as_mut_ptr() as *mut c_void),
+            Some(&mut byte_len),
+        )
+        .is_ok()
+    };
+
+    if !ok || byte_len < 2 {
+        return AutostartConfig {
+            enabled: false,
+            mode: "minimized".to_string(),
+        };
+    }
+
+    let u16_len = (byte_len as usize) / 2;
+    let end = buf[..u16_len]
+        .iter()
+        .position(|&c| c == 0)
+        .unwrap_or(u16_len);
+    let cmd = String::from_utf16_lossy(&buf[..end]);
+    let cmd_lower = cmd.to_lowercase();
+
+    let mode = if cmd_lower.contains("--start-minimized") || cmd_lower.contains("--minimized") {
+        "minimized"
+    } else if cmd_lower.contains("--start-maximized") || cmd_lower.contains("--maximized") {
+        "maximized"
+    } else {
+        "normal"
+    };
+
+    // Respect Windows Task Manager StartupApproved disabled flag if set
+    let approved = read_startup_approved(HKEY_CURRENT_USER, STARTUP_APPROVED_RUN_PATH);
+    let enabled = approved.get(AUTOSTART_VALUE_NAME).copied().unwrap_or(true);
+
+    AutostartConfig {
+        enabled,
+        mode: mode.to_string(),
+    }
+}
+
+#[cfg(windows)]
+pub fn set_autostart_config(enabled: bool, mode: &str) -> Result<AutostartConfig, String> {
+    use windows::core::PCWSTR;
+    use windows::Win32::System::Registry::{
+        RegCloseKey, RegCreateKeyExW, RegDeleteValueW, RegOpenKeyExW, RegSetValueExW, HKEY,
+        HKEY_CURRENT_USER, KEY_SET_VALUE, KEY_WRITE, REG_OPTION_NON_VOLATILE, REG_SZ,
+    };
+
+    let norm_mode = normalize_autostart_mode(mode);
+    let wide_run_path: Vec<u16> = RUN_KEY_PATH
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
+    let wide_name: Vec<u16> = AUTOSTART_VALUE_NAME
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
+
+    if !enabled {
+        unsafe {
+            let mut hkey = HKEY::default();
+            if RegOpenKeyExW(
+                HKEY_CURRENT_USER,
+                PCWSTR(wide_run_path.as_ptr()),
+                0,
+                KEY_SET_VALUE,
+                &mut hkey,
+            )
+            .is_ok()
+            {
+                let _ = RegDeleteValueW(hkey, PCWSTR(wide_name.as_ptr()));
+                let _ = RegCloseKey(hkey);
+            }
+        }
+        return Ok(AutostartConfig {
+            enabled: false,
+            mode: norm_mode.to_string(),
+        });
+    }
+
+    let exe_path = std::env::current_exe()
+        .map_err(|e| format!("Programmpfad konnte nicht ermittelt werden: {e}"))?;
+    let exe_str = exe_path.to_string_lossy();
+    let clean_exe = exe_str.strip_prefix("\\\\?\\").unwrap_or(&exe_str);
+
+    let cmd = match norm_mode {
+        "maximized" => format!("\"{clean_exe}\" --start-maximized"),
+        "minimized" => format!("\"{clean_exe}\" --start-minimized"),
+        _ => format!("\"{clean_exe}\""),
+    };
+
+    let cmd_wide: Vec<u16> = cmd.encode_utf16().chain(std::iter::once(0)).collect();
+    let cmd_bytes = unsafe {
+        std::slice::from_raw_parts(
+            cmd_wide.as_ptr() as *const u8,
+            cmd_wide.len() * std::mem::size_of::<u16>(),
+        )
+    };
+
+    unsafe {
+        let mut hkey = HKEY::default();
+        RegCreateKeyExW(
+            HKEY_CURRENT_USER,
+            PCWSTR(wide_run_path.as_ptr()),
+            0,
+            None,
+            REG_OPTION_NON_VOLATILE,
+            KEY_WRITE,
+            None,
+            &mut hkey,
+            None,
+        )
+        .ok()
+        .map_err(|e| format!("Autostart-Registry-Schlüssel konnte nicht geöffnet werden: {e}"))?;
+
+        let set_res = RegSetValueExW(
+            hkey,
+            PCWSTR(wide_name.as_ptr()),
+            0,
+            REG_SZ,
+            Some(cmd_bytes),
+        )
+        .ok();
+        let _ = RegCloseKey(hkey);
+
+        set_res.map_err(|e| format!("Autostart-Eintrag konnte nicht gespeichert werden: {e}"))?;
+
+        // Clear any disabled flag in StartupApproved\Run so Windows actually runs it
+        let wide_approved: Vec<u16> = STARTUP_APPROVED_RUN_PATH
+            .encode_utf16()
+            .chain(std::iter::once(0))
+            .collect();
+        let mut app_key = HKEY::default();
+        if RegOpenKeyExW(
+            HKEY_CURRENT_USER,
+            PCWSTR(wide_approved.as_ptr()),
+            0,
+            KEY_SET_VALUE,
+            &mut app_key,
+        )
+        .is_ok()
+        {
+            let _ = RegDeleteValueW(app_key, PCWSTR(wide_name.as_ptr()));
+            let _ = RegCloseKey(app_key);
+        }
+    }
+
+    Ok(AutostartConfig {
+        enabled: true,
+        mode: norm_mode.to_string(),
+    })
+}
+
+#[cfg(not(windows))]
+pub fn get_autostart_config() -> AutostartConfig {
+    AutostartConfig {
+        enabled: false,
+        mode: "minimized".to_string(),
+    }
+}
+
+#[cfg(not(windows))]
+pub fn set_autostart_config(_enabled: bool, mode: &str) -> Result<AutostartConfig, String> {
+    Ok(AutostartConfig {
+        enabled: false,
+        mode: normalize_autostart_mode(mode).to_string(),
+    })
+}
 
 #[cfg(windows)]
 pub fn list_startup_entries() -> Vec<StartupEntry> {

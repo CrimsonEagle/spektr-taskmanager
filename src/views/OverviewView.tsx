@@ -759,7 +759,7 @@ export const OverviewView: React.FC<OverviewViewProps> = React.memo(({
             </button>
           </div>
           <div className="flex flex-col gap-2">
-            {snapshot.latestPoint.topCpu.map((p) => {
+            {snapshot.latestPoint.topCpu.slice(0, 5).map((p) => {
               const cat = getCategoryMeta(p.category);
               return (
                 <button
@@ -829,7 +829,7 @@ export const OverviewView: React.FC<OverviewViewProps> = React.memo(({
             </button>
           </div>
           <div className="flex flex-col gap-2">
-            {snapshot.latestPoint.topRam.map((p) => {
+            {snapshot.latestPoint.topRam.slice(0, 5).map((p) => {
               const cat = getCategoryMeta(p.category);
               const pct =
                 memory.totalBytes > 0

@@ -4,6 +4,7 @@ mod file_lock;
 mod gpu;
 mod icons;
 mod models;
+mod net_etw;
 mod network;
 mod process_inspect;
 mod process_ops;
@@ -14,9 +15,9 @@ mod tray_icon;
 mod win_cpu;
 
 use models::{
-    ActionResult, FileLockEntry, HistoryPoint, NetworkConnectionEntry, ProcessAffinityInfo,
-    ProcessEnvInfo, ProcessModulesThreads, ProcessRule, ProcessSecurityInfo, ServiceEntry,
-    StartupEntry, TelemetrySnapshot,
+    ActionResult, AutostartConfig, FileLockEntry, HistoryPoint, NetworkConnectionEntry,
+    ProcessAffinityInfo, ProcessEnvInfo, ProcessModulesThreads, ProcessRule, ProcessSecurityInfo,
+    ServiceEntry, StartupEntry, TelemetrySnapshot,
 };
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
@@ -246,6 +247,16 @@ fn get_startup_entries() -> Vec<StartupEntry> {
 #[tauri::command]
 fn toggle_startup_entry(name: String, registry_subkey: String, enable: bool) -> ActionResult {
     startup_services::toggle_startup_entry(&name, &registry_subkey, enable)
+}
+
+#[tauri::command]
+fn get_autostart_config() -> AutostartConfig {
+    startup_services::get_autostart_config()
+}
+
+#[tauri::command]
+fn set_autostart_config(enabled: bool, mode: String) -> Result<AutostartConfig, String> {
+    startup_services::set_autostart_config(enabled, &mode)
 }
 
 #[tauri::command]
@@ -532,6 +543,7 @@ pub fn run() {
     let bg_tray_cpu_icon = Arc::clone(&tray_cpu_icon);
     let bg_rules = Arc::clone(&rule_store);
     let setup_rules = Arc::clone(&rule_store);
+    let setup_ui_state = Arc::clone(&ui_state);
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -560,6 +572,31 @@ pub fn run() {
         })
         .setup(move |app| {
             let _ = setup_tray(app.handle());
+
+            // Apply requested startup window mode (normal / maximized / minimized to tray)
+            let args: Vec<String> = std::env::args().collect();
+            let start_minimized = args
+                .iter()
+                .any(|a| a == "--start-minimized" || a == "--minimized" || a == "--tray");
+            let start_maximized = !start_minimized
+                && args
+                    .iter()
+                    .any(|a| a == "--start-maximized" || a == "--maximized");
+
+            if start_minimized {
+                if let Ok(mut ui) = setup_ui_state.lock() {
+                    ui.visible = false;
+                }
+                if let Some(win) = app.get_webview_window("main") {
+                    let _ = win.hide();
+                }
+            } else if let Some(win) = app.get_webview_window("main") {
+                if start_maximized {
+                    let _ = win.maximize();
+                }
+                let _ = win.show();
+                let _ = win.set_focus();
+            }
 
             if let Ok(data_dir) = app.path().app_data_dir() {
                 let rules_path = data_dir.join("process_rules.json");
@@ -776,6 +813,8 @@ pub fn run() {
             check_file_locks,
             get_startup_entries,
             toggle_startup_entry,
+            get_autostart_config,
+            set_autostart_config,
             get_services,
             control_service,
             set_service_start_type,
@@ -792,6 +831,11 @@ pub fn run() {
             resolve_reverse_dns,
             get_process_icons,
         ])
-        .run(tauri::generate_context!())
-        .expect("Fehler beim Starten von Pulse Task Manager");
+        .build(tauri::generate_context!())
+        .expect("Fehler beim Starten von Pulse Task Manager")
+        .run(|_app_handle, event| {
+            if let tauri::RunEvent::Exit = event {
+                net_etw::stop_session_by_name();
+            }
+        });
 }

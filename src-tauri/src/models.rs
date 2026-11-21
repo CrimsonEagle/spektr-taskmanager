@@ -139,6 +139,8 @@ pub struct NetworkMetrics {
     pub total_tx_bytes: u64,
     pub primary_interface: String,
     pub interfaces: Vec<NetworkInterfaceInfo>,
+    #[serde(default)]
+    pub per_process_available: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -180,6 +182,10 @@ pub struct ProcessEntry {
     pub disk_write_bytes_per_sec: u64,
     pub total_disk_read_bytes: u64,
     pub total_disk_write_bytes: u64,
+    #[serde(default)]
+    pub net_rx_bytes_per_sec: u64,
+    #[serde(default)]
+    pub net_tx_bytes_per_sec: u64,
     pub status: String,
     pub is_suspended: bool,
     pub is_efficiency_mode: bool,
@@ -203,6 +209,10 @@ pub struct BlameProcess {
     pub gpu_percent: f32,
     pub memory_bytes: u64,
     pub disk_bytes_per_sec: u64,
+    #[serde(default)]
+    pub net_rx_bytes_per_sec: u64,
+    #[serde(default)]
+    pub net_tx_bytes_per_sec: u64,
     pub net_connections: u32,
     pub net_listening_ports: u32,
 }
@@ -392,4 +402,12 @@ pub struct RuleAlertEvent {
     pub pid: u32,
     pub message: String,
     pub timestamp: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AutostartConfig {
+    pub enabled: bool,
+    /// "normal" | "maximized" | "minimized"
+    pub mode: String,
 }

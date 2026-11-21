@@ -145,22 +145,22 @@ export const TitleBar: React.FC<TitleBarProps> = React.memo(
           )}
 
           {snapshot && (
-            <div className="hidden lg:flex items-center gap-1.5 ml-1 text-[11px] font-medium tabular-nums overflow-hidden">
+            <div className="hidden lg:flex items-center gap-1.5 ml-1 text-[11px] font-medium tabular-nums shrink-0">
               {titleBarMetrics.cpu && (
                 <button
                   onClick={() => onSelectPerformanceMetric("cpu")}
-                  className="px-2 py-0.5 rounded-full flex items-center justify-between gap-1.5 min-w-[74px] shrink-0 cursor-pointer transition-opacity hover:opacity-85"
+                  className="px-2 py-0.5 rounded-full flex items-center justify-between gap-1.5 w-[78px] shrink-0 whitespace-nowrap cursor-pointer transition-opacity hover:opacity-85"
                   style={{
                     backgroundColor: "var(--accent-cpu-soft)",
                     color: "var(--accent-cpu)",
                   }}
                   title="CPU-Details in Performance öffnen"
                 >
-                  <span className="flex items-center gap-1">
+                  <span className="flex items-center gap-1 shrink-0">
                     <span className="w-1.5 h-1.5 rounded-full bg-current shrink-0" />
                     CPU
                   </span>
-                  <span className="text-right">
+                  <span className="text-right whitespace-nowrap">
                     {snapshot.cpu.totalUsage.toFixed(0)}%
                   </span>
                 </button>
@@ -169,18 +169,18 @@ export const TitleBar: React.FC<TitleBarProps> = React.memo(
               {titleBarMetrics.ram && (
                 <button
                   onClick={() => onSelectPerformanceMetric("memory")}
-                  className="px-2 py-0.5 rounded-full flex items-center justify-between gap-1.5 min-w-[76px] shrink-0 cursor-pointer transition-opacity hover:opacity-85"
+                  className="px-2 py-0.5 rounded-full flex items-center justify-between gap-1.5 w-[80px] shrink-0 whitespace-nowrap cursor-pointer transition-opacity hover:opacity-85"
                   style={{
                     backgroundColor: "var(--accent-ram-soft)",
                     color: "var(--accent-ram)",
                   }}
                   title="RAM-Details in Performance öffnen"
                 >
-                  <span className="flex items-center gap-1">
+                  <span className="flex items-center gap-1 shrink-0">
                     <span className="w-1.5 h-1.5 rounded-full bg-current shrink-0" />
                     RAM
                   </span>
-                  <span className="text-right">
+                  <span className="text-right whitespace-nowrap">
                     {snapshot.memory.usagePercent.toFixed(0)}%
                   </span>
                 </button>
@@ -191,18 +191,18 @@ export const TitleBar: React.FC<TitleBarProps> = React.memo(
                 snapshot.gpu.usagePercent != null && (
                   <button
                     onClick={() => onSelectPerformanceMetric("gpu")}
-                    className="px-2 py-0.5 rounded-full flex items-center justify-between gap-1.5 min-w-[74px] shrink-0 cursor-pointer transition-opacity hover:opacity-85"
+                    className="px-2 py-0.5 rounded-full flex items-center justify-between gap-1.5 w-[78px] shrink-0 whitespace-nowrap cursor-pointer transition-opacity hover:opacity-85"
                     style={{
                       backgroundColor: "var(--accent-gpu-soft)",
                       color: "var(--accent-gpu)",
                     }}
                     title="GPU-Details in Performance öffnen"
                   >
-                    <span className="flex items-center gap-1">
+                    <span className="flex items-center gap-1 shrink-0">
                       <span className="w-1.5 h-1.5 rounded-full bg-current shrink-0" />
                       GPU
                     </span>
-                    <span className="text-right">
+                    <span className="text-right whitespace-nowrap">
                       {snapshot.gpu.usagePercent.toFixed(0)}%
                     </span>
                   </button>
@@ -211,18 +211,18 @@ export const TitleBar: React.FC<TitleBarProps> = React.memo(
               {titleBarMetrics.disk && (
                 <button
                   onClick={() => onSelectPerformanceMetric("disk")}
-                  className="px-2 py-0.5 rounded-full flex items-center justify-between gap-1.5 shrink-0 cursor-pointer transition-opacity hover:opacity-85"
+                  className="px-2 py-0.5 rounded-full flex items-center justify-between gap-1.5 w-[114px] shrink-0 whitespace-nowrap cursor-pointer transition-opacity hover:opacity-85"
                   style={{
                     backgroundColor: "var(--accent-disk-soft)",
                     color: "var(--accent-disk)",
                   }}
                   title="Datenträger-Details in Performance öffnen"
                 >
-                  <span className="flex items-center gap-1">
+                  <span className="flex items-center gap-1 shrink-0">
                     <span className="w-1.5 h-1.5 rounded-full bg-current shrink-0" />
                     Disk
                   </span>
-                  <span>
+                  <span className="text-right whitespace-nowrap">
                     {formatSpeed(
                       snapshot.disk.readBytesPerSec +
                         snapshot.disk.writeBytesPerSec
@@ -234,18 +234,18 @@ export const TitleBar: React.FC<TitleBarProps> = React.memo(
               {titleBarMetrics.network && (
                 <button
                   onClick={() => onSelectPerformanceMetric("network")}
-                  className="px-2 py-0.5 rounded-full flex items-center justify-between gap-1.5 shrink-0 cursor-pointer transition-opacity hover:opacity-85"
+                  className="px-2 py-0.5 rounded-full flex items-center justify-between gap-1.5 w-[116px] shrink-0 whitespace-nowrap cursor-pointer transition-opacity hover:opacity-85"
                   style={{
                     backgroundColor: "var(--accent-net-soft)",
                     color: "var(--accent-net)",
                   }}
                   title="Netzwerk-Details in Performance öffnen"
                 >
-                  <span className="flex items-center gap-1">
+                  <span className="flex items-center gap-1 shrink-0">
                     <span className="w-1.5 h-1.5 rounded-full bg-current shrink-0" />
                     Netz
                   </span>
-                  <span>
+                  <span className="text-right whitespace-nowrap">
                     {formatSpeed(
                       snapshot.network.rxBytesPerSec +
                         snapshot.network.txBytesPerSec

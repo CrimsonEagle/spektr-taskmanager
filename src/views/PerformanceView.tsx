@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
+  ArrowUpDown,
   Cpu,
   Download,
   Fan,
@@ -10,6 +11,7 @@ import {
   History,
   Info,
   MemoryStick,
+  Shield,
   Thermometer,
   Wifi,
   X,
@@ -42,11 +44,54 @@ interface PerformanceViewProps {
   initialSpikeTimestamp?: number | null;
   onClearInitialSpike?: () => void;
   onInspectPid: (pid: number, fallback?: BlameProcess) => void;
+  onRestartAsAdmin?: () => void;
   onActionFeedback?: (res: ActionResult) => void;
 }
 
 type MetricKey = "cpu" | "ram" | "gpu" | "disk" | "net";
 type TimeWindow = 60 | 300 | 900;
+type GpuSeriesKey = "overall" | "3d" | "copy" | "encode" | "decode";
+
+const GPU_SERIES_META: Record<
+  GpuSeriesKey,
+  {
+    label: string;
+    shortLabel: string;
+    chartTitle: string;
+    selector: (p: HistoryPoint) => number;
+  }
+> = {
+  overall: {
+    label: "GPU Gesamt",
+    shortLabel: "GPU",
+    chartTitle: "GPU",
+    selector: (p) => p.gpuPercent,
+  },
+  "3d": {
+    label: "3D",
+    shortLabel: "3D",
+    chartTitle: "GPU · 3D",
+    selector: (p) => p.gpuEngine3d ?? 0,
+  },
+  copy: {
+    label: "Copy",
+    shortLabel: "Copy",
+    chartTitle: "GPU · Copy",
+    selector: (p) => p.gpuEngineCopy ?? 0,
+  },
+  encode: {
+    label: "Video Encode",
+    shortLabel: "Encode",
+    chartTitle: "GPU · Video Encode",
+    selector: (p) => p.gpuEngineEncode ?? 0,
+  },
+  decode: {
+    label: "Video Decode",
+    shortLabel: "Decode",
+    chartTitle: "GPU · Video Decode",
+    selector: (p) => p.gpuEngineDecode ?? 0,
+  },
+};
 
 function perfToMetricKey(m: PerformanceMetric): MetricKey {
   if (m === "memory") return "ram";
@@ -125,8 +170,8 @@ const METRIC_STATIC_META: Record<
     unit: "KB/s",
     max: undefined,
     listTitleSingle: "Top Netzwerk-Prozesse",
-    listTitleRange: "Top Netzwerk (Zeitraum)",
-    emptyText: "Keine aktiven Netzwerk-Verbindungen gefunden.",
+    listTitleRange: "Top Netzwerk-Prozesse (Zeitraum)",
+    emptyText: "Kein messbarer Netzwerk-Durchsatz in diesem Zeitraum.",
   },
 };
 
@@ -144,6 +189,10 @@ interface AggregatedProcess {
   maxRamBytes: number;
   avgDiskBytes: number;
   maxDiskBytes: number;
+  avgNetBytes: number;
+  maxNetBytes: number;
+  avgNetRxBytes: number;
+  avgNetTxBytes: number;
   avgNetConns: number;
   maxNetConns: number;
   maxNetPorts: number;
@@ -158,6 +207,7 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
   initialSpikeTimestamp,
   onClearInitialSpike,
   onInspectPid,
+  onRestartAsAdmin,
   onActionFeedback,
 }) => {
   const [internalMetric, setInternalMetric] = useState<MetricKey>("cpu");
@@ -174,11 +224,34 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
   const [diskChartMode, setDiskChartMode] = useState<"active" | "throughput">(
     "active"
   );
+  const [activeGpuSeries, setActiveGpuSeries] =
+    useState<GpuSeriesKey>("overall");
+  const [gpuBottomSlots, setGpuBottomSlots] = useState<GpuSeriesKey[]>([
+    "3d",
+    "copy",
+    "encode",
+    "decode",
+  ]);
   const [selectedRange, setSelectedRange] = useState<TimeRange | null>(null);
   const [hoverPoint, setHoverPoint] = useState<HistoryPoint | null>(null);
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
   const [showAllProcesses, setShowAllProcesses] = useState(false);
   const exportMenuRef = useRef<HTMLDivElement>(null);
+
+  const handleSwapGpuSeries = (slotIndex: number) => {
+    const clicked = gpuBottomSlots[slotIndex];
+    if (!clicked) return;
+    const prevActive = activeGpuSeries;
+    setActiveGpuSeries(clicked);
+    setGpuBottomSlots((prev) =>
+      prev.map((key, idx) => (idx === slotIndex ? prevActive : key))
+    );
+  };
+
+  const handleResetGpuSeries = () => {
+    setActiveGpuSeries("overall");
+    setGpuBottomSlots(["3d", "copy", "encode", "decode"]);
+  };
 
   useEffect(() => {
     if (!exportMenuOpen) return;
@@ -220,9 +293,29 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
 
   const staticMeta = METRIC_STATIC_META[metric];
   const isDiskActiveChart = metric === "disk" && diskChartMode === "active";
+  const activeGpuMeta = GPU_SERIES_META[activeGpuSeries];
   const valueSelector = isDiskActiveChart
     ? DISK_ACTIVE_SELECTOR
-    : METRIC_SELECTORS[metric];
+    : metric === "gpu"
+      ? activeGpuMeta.selector
+      : METRIC_SELECTORS[metric];
+
+  const getLiveGpuSeriesVal = (key: GpuSeriesKey): number | null => {
+    switch (key) {
+      case "overall":
+        return snapshot.gpu.usagePercent;
+      case "3d":
+        return snapshot.gpu.engine3dPercent ?? 0;
+      case "copy":
+        return snapshot.gpu.engineCopyPercent ?? 0;
+      case "encode":
+        return snapshot.gpu.engineVideoEncodePercent ?? 0;
+      case "decode":
+        return snapshot.gpu.engineVideoDecodePercent ?? 0;
+    }
+  };
+
+  const activeGpuLiveVal = getLiveGpuSeriesVal(activeGpuSeries);
 
   const currentMetricText =
     metric === "cpu"
@@ -230,8 +323,8 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
       : metric === "ram"
         ? `${snapshot.memory.usagePercent.toFixed(1)}%`
         : metric === "gpu"
-          ? snapshot.gpu.usagePercent != null
-            ? `${snapshot.gpu.usagePercent.toFixed(0)}%`
+          ? activeGpuLiveVal != null
+            ? `${activeGpuLiveVal.toFixed(0)}%`
             : "–"
           : metric === "disk"
             ? isDiskActiveChart
@@ -258,6 +351,7 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
 
   const metricConfig = {
     ...staticMeta,
+    label: metric === "gpu" ? activeGpuMeta.chartTitle : staticMeta.label,
     unit: isDiskActiveChart ? "%" : staticMeta.unit,
     max: isDiskActiveChart ? 100 : staticMeta.max,
     selector: valueSelector,
@@ -265,11 +359,12 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
     icon: metricIcon,
   };
 
-  // 60-sample mini-history for GPU engine Sparklines
-  const gpuEngineSeries = useMemo(() => {
+  // 60-sample mini-history for GPU engine Sparklines (including overall for swap slots)
+  const gpuEngineSeries = useMemo<Record<GpuSeriesKey, number[]>>(() => {
     const recent = history.slice(-60);
     return {
-      e3d: recent.map((h) => h.gpuEngine3d ?? 0),
+      overall: recent.map((h) => h.gpuPercent),
+      "3d": recent.map((h) => h.gpuEngine3d ?? 0),
       copy: recent.map((h) => h.gpuEngineCopy ?? 0),
       encode: recent.map((h) => h.gpuEngineEncode ?? 0),
       decode: recent.map((h) => h.gpuEngineDecode ?? 0),
@@ -300,12 +395,20 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
     let maxRam = 0;
     let sumGpu = 0;
     let maxGpu = 0;
+    let sumGpuSelected = 0;
+    let maxGpuSelected = 0;
+    let sumGpu3d = 0;
+    let sumGpuCopy = 0;
+    let sumGpuEncode = 0;
+    let sumGpuDecode = 0;
     let sumDisk = 0;
     let maxDisk = 0;
     let sumNet = 0;
     let maxNet = 0;
     let sumUnacc = 0;
     let maxUnacc = 0;
+
+    const gpuSelectedSelector = GPU_SERIES_META[activeGpuSeries].selector;
 
     for (let i = 0; i < n; i++) {
       const p = activePoints[i];
@@ -315,6 +418,13 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
       if (p.ramPercent > maxRam) maxRam = p.ramPercent;
       sumGpu += p.gpuPercent;
       if (p.gpuPercent > maxGpu) maxGpu = p.gpuPercent;
+      const gSel = gpuSelectedSelector(p);
+      sumGpuSelected += gSel;
+      if (gSel > maxGpuSelected) maxGpuSelected = gSel;
+      sumGpu3d += p.gpuEngine3d ?? 0;
+      sumGpuCopy += p.gpuEngineCopy ?? 0;
+      sumGpuEncode += p.gpuEngineEncode ?? 0;
+      sumGpuDecode += p.gpuEngineDecode ?? 0;
       sumDisk += p.diskMbPerSec;
       if (p.diskMbPerSec > maxDisk) maxDisk = p.diskMbPerSec;
       sumNet += p.netKbPerSec;
@@ -354,6 +464,10 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
         ramMax: number;
         diskSum: number;
         diskMax: number;
+        netSum: number;
+        netMax: number;
+        netRxSum: number;
+        netTxSum: number;
         netConnSum: number;
         netConnMax: number;
         netPortsMax: number;
@@ -367,6 +481,9 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
         const existing = procMap.get(key);
         const gpu = bp.gpuPercent ?? 0;
         const disk = bp.diskBytesPerSec ?? 0;
+        const netRx = bp.netRxBytesPerSec ?? 0;
+        const netTx = bp.netTxBytesPerSec ?? 0;
+        const netTot = netRx + netTx;
         const netC = bp.netConnections ?? 0;
         const netP = bp.netListeningPorts ?? 0;
 
@@ -379,6 +496,10 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
           existing.ramMax = Math.max(existing.ramMax, bp.memoryBytes);
           existing.diskSum += disk;
           existing.diskMax = Math.max(existing.diskMax, disk);
+          existing.netSum += netTot;
+          existing.netMax = Math.max(existing.netMax, netTot);
+          existing.netRxSum += netRx;
+          existing.netTxSum += netTx;
           existing.netConnSum += netC;
           existing.netConnMax = Math.max(existing.netConnMax, netC);
           existing.netPortsMax = Math.max(existing.netPortsMax, netP);
@@ -398,6 +519,10 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
             ramMax: bp.memoryBytes,
             diskSum: disk,
             diskMax: disk,
+            netSum: netTot,
+            netMax: netTot,
+            netRxSum: netRx,
+            netTxSum: netTx,
             netConnSum: netC,
             netConnMax: netC,
             netPortsMax: netP,
@@ -422,6 +547,10 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
         maxRamBytes: v.ramMax,
         avgDiskBytes: v.diskSum / n,
         maxDiskBytes: v.diskMax,
+        avgNetBytes: v.netSum / n,
+        maxNetBytes: v.netMax,
+        avgNetRxBytes: v.netRxSum / n,
+        avgNetTxBytes: v.netTxSum / n,
         avgNetConns: v.netConnSum / n,
         maxNetConns: v.netConnMax,
         maxNetPorts: v.netPortsMax,
@@ -447,9 +576,7 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
       case "net":
         aggregated.sort(
           (a, b) =>
-            b.avgNetConns - a.avgNetConns ||
-            b.maxNetConns - a.maxNetConns ||
-            b.maxNetPorts - a.maxNetPorts
+            b.avgNetBytes - a.avgNetBytes || b.maxNetBytes - a.maxNetBytes
         );
         break;
       default:
@@ -467,6 +594,12 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
       maxRam,
       avgGpu: sumGpu / n,
       maxGpu,
+      avgGpuSelected: sumGpuSelected / n,
+      maxGpuSelected,
+      avgGpu3d: sumGpu3d / n,
+      avgGpuCopy: sumGpuCopy / n,
+      avgGpuEncode: sumGpuEncode / n,
+      avgGpuDecode: sumGpuDecode / n,
       avgDisk: sumDisk / n,
       maxDisk,
       avgNet: sumNet / n,
@@ -476,45 +609,59 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
       topProcesses: aggregated.slice(0, 5),
       allProcesses: aggregated,
     };
-  }, [activePoints, metric]);
+  }, [activePoints, metric, activeGpuSeries]);
 
   const isLiveMode = !isPinned && !hoverPoint;
 
   // Expandable process list: in Live mode up to 30 live processes from snapshot.processes;
   // in History/Range mode all unique aggregated BlameProcesses from the selected window.
   const { displayedProcesses, totalAvailableProcesses } = useMemo(() => {
-    if (isLiveMode && metric !== "net" && snapshot.processes.length > 0) {
-      const liveAgg: AggregatedProcess[] = snapshot.processes.map((p) => ({
-        key: `${p.pid}::${p.name}`,
-        pid: p.pid,
-        name: p.name,
-        subtitle: p.subtitle,
-        category: p.category,
-        avgCpu: p.cpuPercent,
-        maxCpu: p.cpuPercent,
-        avgGpu: p.gpuPercent,
-        maxGpu: p.gpuPercent,
-        avgRamBytes: p.memoryBytes,
-        maxRamBytes: p.memoryBytes,
-        avgDiskBytes: p.diskReadBytesPerSec + p.diskWriteBytesPerSec,
-        maxDiskBytes: p.diskReadBytesPerSec + p.diskWriteBytesPerSec,
-        avgNetConns: 0,
-        maxNetConns: 0,
-        maxNetPorts: 0,
-        samples: 1,
-      }));
+    if (isLiveMode && snapshot.processes.length > 0) {
+      const liveAgg: AggregatedProcess[] = snapshot.processes.map((p) => {
+        const netRx = p.netRxBytesPerSec ?? 0;
+        const netTx = p.netTxBytesPerSec ?? 0;
+        const netTot = netRx + netTx;
+        return {
+          key: `${p.pid}::${p.name}`,
+          pid: p.pid,
+          name: p.name,
+          subtitle: p.subtitle,
+          category: p.category,
+          avgCpu: p.cpuPercent,
+          maxCpu: p.cpuPercent,
+          avgGpu: p.gpuPercent,
+          maxGpu: p.gpuPercent,
+          avgRamBytes: p.memoryBytes,
+          maxRamBytes: p.memoryBytes,
+          avgDiskBytes: p.diskReadBytesPerSec + p.diskWriteBytesPerSec,
+          maxDiskBytes: p.diskReadBytesPerSec + p.diskWriteBytesPerSec,
+          avgNetBytes: netTot,
+          maxNetBytes: netTot,
+          avgNetRxBytes: netRx,
+          avgNetTxBytes: netTx,
+          avgNetConns: 0,
+          maxNetConns: 0,
+          maxNetPorts: 0,
+          samples: 1,
+        };
+      });
 
+      let filtered = liveAgg;
       if (metric === "ram") {
-        liveAgg.sort((a, b) => b.avgRamBytes - a.avgRamBytes);
+        filtered.sort((a, b) => b.avgRamBytes - a.avgRamBytes);
       } else if (metric === "gpu") {
-        liveAgg.sort((a, b) => b.avgGpu - a.avgGpu);
+        filtered.sort((a, b) => b.avgGpu - a.avgGpu);
       } else if (metric === "disk") {
-        liveAgg.sort((a, b) => b.avgDiskBytes - a.avgDiskBytes);
+        filtered.sort((a, b) => b.avgDiskBytes - a.avgDiskBytes);
+      } else if (metric === "net") {
+        filtered = liveAgg
+          .filter((p) => p.avgNetBytes > 0)
+          .sort((a, b) => b.avgNetBytes - a.avgNetBytes);
       } else {
-        liveAgg.sort((a, b) => b.avgCpu - a.avgCpu);
+        filtered.sort((a, b) => b.avgCpu - a.avgCpu);
       }
 
-      const capped = liveAgg.slice(0, 30);
+      const capped = filtered.slice(0, 30);
       return {
         displayedProcesses: showAllProcesses ? capped : capped.slice(0, 5),
         totalAvailableProcesses: capped.length,
@@ -718,9 +865,9 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
     },
   ];
 
-  const maxNetConnsInList = Math.max(
-    1,
-    ...displayedProcesses.map((p) => p.maxNetConns || p.maxNetPorts)
+  const maxNetInList = Math.max(
+    1024,
+    ...displayedProcesses.map((p) => p.maxNetBytes)
   );
   const maxDiskInList = Math.max(
     1024,
@@ -849,24 +996,28 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
 
       {/* Main Chart + Range/Spike Analytics Panel — Fixed-height cards to prevent ANY layout shift */}
       <div className="grid grid-cols-1 xl:grid-cols-[1fr_365px] gap-4 items-stretch">
-        <div className="fluent-card p-4 flex flex-col gap-3 h-[524px] overflow-hidden min-w-0">
-          <div className="h-[42px] shrink-0 flex items-center justify-between gap-2 min-w-0">
-            <div className="flex items-center gap-2.5 min-w-0">
+        <div className="fluent-card p-4 flex flex-col gap-3 h-[500px] overflow-hidden min-w-0">
+          <div className="h-[32px] shrink-0 flex items-center justify-between gap-2 min-w-0">
+            <div className="flex items-center gap-2 min-w-0">
               <span className="shrink-0" style={{ color: metricConfig.color }}>
                 {metricConfig.icon}
               </span>
-              <div className="min-w-0">
-                <h3 className="text-sm font-semibold truncate">
-                  {metricConfig.label}-Verlauf & Bereichs-Analyse
-                </h3>
-                <p
-                  className="text-[11px] truncate"
-                  style={{ color: "var(--text-muted)" }}
+              <h3 className="text-sm font-semibold truncate">
+                {metricConfig.label}-Verlauf & Bereichs-Analyse
+              </h3>
+              {metric === "gpu" && activeGpuSeries !== "overall" && (
+                <button
+                  onClick={handleResetGpuSeries}
+                  className="px-2 py-0.5 rounded-md text-[10px] font-semibold cursor-pointer shrink-0 whitespace-nowrap transition-opacity hover:opacity-85"
+                  style={{
+                    backgroundColor: "var(--accent-gpu-soft)",
+                    color: "var(--accent-gpu)",
+                  }}
+                  title="Zurück zur Gesamt-GPU-Ansicht"
                 >
-                  Ziehe mit gedrückter Maustaste einen Bereich auf (oder klicke
-                  einen Punkt), um diesen Zeitraum auszuwerten.
-                </p>
-              </div>
+                  ← Gesamt
+                </button>
+              )}
             </div>
             <div className="flex items-center gap-2 shrink-0">
               {metric === "disk" && (
@@ -920,14 +1071,14 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
             </div>
           </div>
 
-          <div className="h-[282px] shrink-0 w-full">
+          <div className="h-[320px] shrink-0 w-full">
             <InteractiveAreaChart
               data={slicedHistory}
               valueSelector={metricConfig.selector}
               color={metricConfig.color}
               unit={metricConfig.unit}
               maxValue={metricConfig.max}
-              height={282}
+              height={320}
               selectedRange={selectedRange}
               onSelectRange={setSelectedRange}
               onHoverPoint={setHoverPoint}
@@ -936,7 +1087,7 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
 
           {/* Selection / Status Strip — ALWAYS rendered with fixed height so hover/selection NEVER shifts layout */}
           <div
-            className="h-[36px] shrink-0 flex items-center justify-between gap-2 px-3 rounded-xl border text-xs overflow-hidden"
+            className="h-[34px] shrink-0 flex items-center justify-between gap-2 px-3 rounded-xl border text-xs overflow-hidden"
             style={
               isPinned
                 ? {
@@ -996,18 +1147,18 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
             )}
           </div>
 
-          {/* Detected Spikes Strip — ALWAYS rendered with fixed height & internal scroll */}
+          {/* Detected Spikes Strip — Compact fixed height & internal scroll */}
           <div
-            className="h-[82px] shrink-0 overflow-y-auto stable-scroll pt-2 border-t"
+            className="h-[44px] shrink-0 overflow-y-auto stable-scroll pt-2 border-t flex items-center"
             style={{ borderColor: "var(--border-subtle)" }}
           >
             {detectedSpikes.length > 0 ? (
-              <div className="flex items-center gap-1.5 flex-wrap">
+              <div className="flex items-center gap-1.5 flex-wrap w-full">
                 <span
                   className="text-[11px] font-semibold flex items-center gap-1 shrink-0 mr-0.5"
                   style={{ color: "var(--accent-danger)" }}
                 >
-                  <AlertTriangle className="w-3.5 h-3.5" /> Erkannte Spikes:
+                  <AlertTriangle className="w-3.5 h-3.5" /> Lastspitzen:
                 </span>
                 {detectedSpikes.map((point) => {
                   const isIncluded =
@@ -1034,7 +1185,7 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
               </div>
             ) : (
               <div
-                className="h-full flex items-center text-[11px]"
+                className="text-[11px]"
                 style={{ color: "var(--text-muted)" }}
               >
                 Keine Lastspitzen im aktuellen Zeitfenster erkannt.
@@ -1044,7 +1195,7 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
         </div>
 
         {/* Right Panel: Metric-specific Top Processes & Range Analytics — Locked height matching chart card */}
-        <div className="fluent-card p-4 flex flex-col gap-3 h-[524px] overflow-hidden min-w-0">
+        <div className="fluent-card p-4 flex flex-col gap-3 h-[500px] overflow-hidden min-w-0">
           <div className="h-[40px] shrink-0 flex items-center justify-between gap-2 min-w-0">
             <div className="min-w-0">
               <h3 className="text-sm font-semibold flex items-center gap-1.5 truncate">
@@ -1139,18 +1290,52 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
                 className="text-[10px] whitespace-nowrap truncate"
                 style={{ color: "var(--text-muted)" }}
               >
-                GPU {isRangeMode ? "(Ø / Max)" : ""}
+                {metric === "gpu" ? activeGpuMeta.shortLabel : "GPU"}{" "}
+                {isRangeMode ? "(Ø / Max)" : ""}
               </div>
               <div
                 className="text-xs font-bold mt-0.5 whitespace-nowrap truncate"
                 style={{ color: "var(--accent-gpu)" }}
               >
-                {isRangeMode
-                  ? `${analytics.avgGpu.toFixed(0)}% / ${analytics.maxGpu.toFixed(0)}%`
-                  : `${analytics.avgGpu.toFixed(0)}%`}
+                {metric === "gpu"
+                  ? isRangeMode
+                    ? `${analytics.avgGpuSelected.toFixed(0)}% / ${analytics.maxGpuSelected.toFixed(0)}%`
+                    : `${analytics.avgGpuSelected.toFixed(0)}%`
+                  : isRangeMode
+                    ? `${analytics.avgGpu.toFixed(0)}% / ${analytics.maxGpu.toFixed(0)}%`
+                    : `${analytics.avgGpu.toFixed(0)}%`}
               </div>
             </div>
           </div>
+
+          {/* Extra GPU Engine breakdown for the selected point/range when GPU tab is active */}
+          {metric === "gpu" && (
+            <div
+              className="shrink-0 px-3 py-2 rounded-lg border text-[11px] flex flex-col gap-1 tabular-nums"
+              style={{
+                backgroundColor: "var(--bg-subtle)",
+                borderColor: "var(--border-subtle)",
+              }}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <span className="truncate" style={{ color: "var(--text-muted)" }}>
+                  {activeGpuSeries === "overall"
+                    ? "Engines (3D · Copy · Enc · Dec)"
+                    : `GPU Gesamt · ${activeGpuMeta.label}`}
+                </span>
+                <span
+                  className="font-semibold shrink-0 whitespace-nowrap"
+                  style={{ color: "var(--accent-gpu)" }}
+                >
+                  {activeGpuSeries === "overall"
+                    ? `${analytics.avgGpu3d.toFixed(0)}% · ${analytics.avgGpuCopy.toFixed(0)}% · ${analytics.avgGpuEncode.toFixed(0)}% · ${analytics.avgGpuDecode.toFixed(0)}%`
+                    : isRangeMode
+                      ? `${analytics.avgGpu.toFixed(0)}% · Ø ${analytics.avgGpuSelected.toFixed(0)}%`
+                      : `${analytics.avgGpu.toFixed(0)}% · ${analytics.avgGpuSelected.toFixed(0)}%`}
+                </span>
+              </div>
+            </div>
+          )}
 
           {/* Extra RAM Commit & Pool details when RAM tab is selected */}
           {metric === "ram" &&
@@ -1233,23 +1418,42 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
 
           {metric === "net" && (
             <div
-              className="shrink-0 px-3 py-2 rounded-lg border text-xs flex items-center justify-between gap-2 tabular-nums"
+              className="shrink-0 px-3 py-2 rounded-lg border text-[11px] flex flex-col gap-1 tabular-nums"
               style={{
                 backgroundColor: "var(--bg-subtle)",
                 borderColor: "var(--border-subtle)",
               }}
             >
-              <span className="truncate" style={{ color: "var(--text-muted)" }}>
-                {isRangeMode ? "Netzwerk (Ø / Peak)" : "Netzwerk Durchsatz"}
-              </span>
-              <span
-                className="font-bold shrink-0 whitespace-nowrap"
-                style={{ color: metricConfig.color }}
-              >
-                {isRangeMode
-                  ? `${analytics.avgNet.toFixed(0)} / ${analytics.maxNet.toFixed(0)} KB/s`
-                  : `${analytics.avgNet.toFixed(0)} KB/s`}
-              </span>
+              <div className="flex items-center justify-between gap-2">
+                <span className="truncate" style={{ color: "var(--text-muted)" }}>
+                  {isRangeMode ? "Durchsatz (Ø / Peak)" : "Netzwerk Durchsatz"}
+                </span>
+                <span
+                  className="font-bold shrink-0 whitespace-nowrap"
+                  style={{ color: metricConfig.color }}
+                >
+                  {isRangeMode
+                    ? `${formatSpeed(analytics.avgNet * 1024)} / ${formatSpeed(analytics.maxNet * 1024)}`
+                    : formatSpeed(
+                        snapshot.network.rxBytesPerSec +
+                          snapshot.network.txBytesPerSec
+                      )}
+                </span>
+              </div>
+              {!isRangeMode && (
+                <div className="flex items-center justify-between gap-2">
+                  <span
+                    className="truncate"
+                    style={{ color: "var(--text-muted)" }}
+                  >
+                    Download / Upload
+                  </span>
+                  <span className="font-semibold shrink-0 whitespace-nowrap">
+                    ↓ {formatSpeed(snapshot.network.rxBytesPerSec)} · ↑{" "}
+                    {formatSpeed(snapshot.network.txBytesPerSec)}
+                  </span>
+                </div>
+              )}
             </div>
           )}
 
@@ -1279,14 +1483,40 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
 
             {displayedProcesses.length === 0 ? (
               <div
-                className="flex-1 min-h-0 p-4 rounded-xl border flex items-center justify-center text-center text-xs"
+                className="flex-1 min-h-0 p-4 rounded-xl border flex flex-col items-center justify-center gap-2.5 text-center text-xs"
                 style={{
                   backgroundColor: "var(--bg-subtle)",
                   borderColor: "var(--border-subtle)",
                   color: "var(--text-muted)",
                 }}
               >
-                {metricConfig.emptyText}
+                {metric === "net" && !snapshot.network.perProcessAvailable ? (
+                  <>
+                    <Shield
+                      className="w-5 h-5 opacity-80"
+                      style={{ color: "var(--accent-net)" }}
+                    />
+                    <div className="font-semibold" style={{ color: "var(--text-primary)" }}>
+                      Administratorrechte erforderlich
+                    </div>
+                    <p className="text-[11px] leading-relaxed max-w-[260px]">
+                      Windows stellt den Netzwerk-Datendurchsatz pro Prozess nur
+                      über Kernel-ETW bereit.
+                    </p>
+                    {onRestartAsAdmin && (
+                      <button
+                        onClick={onRestartAsAdmin}
+                        className="mt-0.5 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-semibold text-white cursor-pointer transition-opacity hover:opacity-90"
+                        style={{ backgroundColor: "var(--accent-net)" }}
+                      >
+                        <Shield className="w-3.5 h-3.5" />
+                        Als Admin neu starten
+                      </button>
+                    )}
+                  </>
+                ) : (
+                  metricConfig.emptyText
+                )}
               </div>
             ) : (
               <div className="flex-1 min-h-0 overflow-y-auto stable-scroll pr-0.5 flex flex-col gap-1.5">
@@ -1335,25 +1565,17 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
                       Math.max(4, (bp.maxDiskBytes / maxDiskInList) * 100)
                     );
                   } else if (metric === "net") {
-                    const mainConns = isRangeMode
-                      ? Math.round(bp.avgNetConns)
-                      : bp.maxNetConns;
-                    primaryVal =
-                      mainConns > 0
-                        ? `${mainConns} aktiv`
-                        : `${bp.maxNetPorts} Port${bp.maxNetPorts === 1 ? "" : "s"}`;
-                    if (isRangeMode && bp.maxNetConns > mainConns) {
-                      secondaryVal = `Peak ${bp.maxNetConns}${bp.maxNetPorts > 0 ? ` · ${bp.maxNetPorts}P` : ""}`;
-                    } else if (mainConns > 0 && bp.maxNetPorts > 0) {
-                      secondaryVal = `${bp.maxNetPorts} offene Ports`;
+                    primaryVal = isRangeMode
+                      ? `Ø ${formatSpeed(bp.avgNetBytes)}`
+                      : formatSpeed(bp.avgNetBytes);
+                    if (isRangeMode) {
+                      secondaryVal = `Peak ${formatSpeed(bp.maxNetBytes)}`;
+                    } else {
+                      secondaryVal = `↓ ${formatSpeed(bp.avgNetRxBytes)} · ↑ ${formatSpeed(bp.avgNetTxBytes)}`;
                     }
                     barPct = Math.min(
                       100,
-                      Math.max(
-                        6,
-                        ((bp.maxNetConns || bp.maxNetPorts) / maxNetConnsInList) *
-                          100
-                      )
+                      Math.max(4, (bp.maxNetBytes / maxNetInList) * 100)
                     );
                   } else {
                     primaryVal = isRangeMode
@@ -1377,6 +1599,8 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
                     gpuPercent: bp.avgGpu,
                     memoryBytes: bp.avgRamBytes,
                     diskBytesPerSec: bp.avgDiskBytes,
+                    netRxBytesPerSec: bp.avgNetRxBytes,
+                    netTxBytesPerSec: bp.avgNetTxBytes,
                     netConnections: bp.maxNetConns,
                     netListeningPorts: bp.maxNetPorts,
                   };
@@ -1498,62 +1722,51 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
               </div>
 
               <div className="grid grid-cols-2 gap-2.5">
-                {(
-                  [
-                    {
-                      label: "3D",
-                      val: snapshot.gpu.engine3dPercent ?? 0,
-                      series: gpuEngineSeries.e3d,
-                    },
-                    {
-                      label: "Copy",
-                      val: snapshot.gpu.engineCopyPercent ?? 0,
-                      series: gpuEngineSeries.copy,
-                    },
-                    {
-                      label: "Video Encode",
-                      val: snapshot.gpu.engineVideoEncodePercent ?? 0,
-                      series: gpuEngineSeries.encode,
-                    },
-                    {
-                      label: "Video Decode",
-                      val: snapshot.gpu.engineVideoDecodePercent ?? 0,
-                      series: gpuEngineSeries.decode,
-                    },
-                  ] as const
-                ).map((eng) => (
-                  <div
-                    key={eng.label}
-                    className="p-2.5 rounded-xl border flex flex-col gap-1.5"
-                    style={{
-                      backgroundColor: "var(--bg-subtle)",
-                      borderColor: "var(--border-subtle)",
-                    }}
-                  >
-                    <div className="flex items-center justify-between text-[11px] tabular-nums">
-                      <span
-                        className="font-medium"
-                        style={{ color: "var(--text-secondary)" }}
-                      >
-                        {eng.label}
-                      </span>
-                      <span
-                        className="font-bold"
-                        style={{ color: "var(--accent-gpu)" }}
-                      >
-                        {eng.val.toFixed(0)}%
-                      </span>
-                    </div>
-                    <Sparkline
-                      data={eng.series}
-                      color="var(--accent-gpu)"
-                      width={220}
-                      height={36}
-                      maxValue={100}
-                      className="w-full block"
-                    />
-                  </div>
-                ))}
+                {gpuBottomSlots.map((slotKey, idx) => {
+                  const meta = GPU_SERIES_META[slotKey];
+                  const val = getLiveGpuSeriesVal(slotKey) ?? 0;
+                  const series = gpuEngineSeries[slotKey];
+                  return (
+                    <button
+                      type="button"
+                      key={slotKey}
+                      onClick={() => handleSwapGpuSeries(idx)}
+                      className="group p-2.5 rounded-xl border flex flex-col gap-1.5 text-left cursor-pointer transition-colors hover:bg-[var(--bg-surface-hover)] hover:border-[var(--accent-gpu)]"
+                      style={{
+                        backgroundColor: "var(--bg-subtle)",
+                        borderColor: "var(--border-subtle)",
+                      }}
+                      title={`${meta.label} in das Hauptdiagramm tauschen`}
+                    >
+                      <div className="flex items-center justify-between text-[11px] tabular-nums w-full gap-1">
+                        <span
+                          className="font-medium flex items-center gap-1 truncate"
+                          style={{ color: "var(--text-secondary)" }}
+                        >
+                          <span className="truncate">{meta.label}</span>
+                          <ArrowUpDown
+                            className="w-3 h-3 opacity-0 group-hover:opacity-80 transition-opacity shrink-0"
+                            style={{ color: "var(--accent-gpu)" }}
+                          />
+                        </span>
+                        <span
+                          className="font-bold shrink-0"
+                          style={{ color: "var(--accent-gpu)" }}
+                        >
+                          {val.toFixed(0)}%
+                        </span>
+                      </div>
+                      <Sparkline
+                        data={series}
+                        color="var(--accent-gpu)"
+                        width={220}
+                        height={36}
+                        maxValue={100}
+                        className="w-full block"
+                      />
+                    </button>
+                  );
+                })}
               </div>
 
               {/* Dedicated, Shared & Combined GPU Memory */}
