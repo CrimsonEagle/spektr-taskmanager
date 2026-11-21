@@ -118,5 +118,5 @@ pnpm tauri build
 ### Build Outputs
 After running `pnpm tauri build`, you will find:
 - **Windows Setup Installer (recommended):** `src-tauri/target/release/bundle/nsis/Spektr Taskmanager_<version>_x64-setup.exe`
-- **Windows MSI Installer:** `src-tauri/target/release/bundle/msi/Pulse Task Manager_<version>_x64_en-US.msi`
-- **Standalone Portable Executable:** `src-tauri/target/release/pulse-taskmanager.exe`
+- **Windows MSI Installer:** `src-tauri/target/release/bundle/msi/Spektr Taskmanager_<version>_x64_en-US.msi`
+- **Standalone Portable Executable:** `src-tauri/target/release/spektr-taskmanager.exe`
