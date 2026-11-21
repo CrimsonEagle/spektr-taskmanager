@@ -1,12 +1,12 @@
 [package]
-name = "pulse-taskmanager"
+name = "spektr-taskmanager"
 version = "0.2.0"
-description = "Pulse — Moderner, farbenfroher Windows Task-Manager"
+description = "Spektr Taskmanager — Moderner Windows Task-Manager"
 authors = ["Marco"]
 edition = "2021"
 
 [lib]
-name = "pulse_taskmanager_lib"
+name = "spektr_taskmanager_lib"
 crate-type = ["rlib"]
 
 [build-dependencies]
@@ -21,6 +21,8 @@ sysinfo = "0.33"
 chrono = "0.4"
 
 [target.'cfg(windows)'.dependencies]
+webview2-com = "0.39"
+windows-core = "0.62"
 windows = { version = "0.58", features = [
     "Win32_Foundation",
     "Win32_Security",

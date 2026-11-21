@@ -1,21 +1,21 @@
 import React, { useMemo } from "react";
 import { motion } from "framer-motion";
 import {
-  AlertTriangle,
   ArrowDown,
+  ArrowsClockwise as RefreshCw,
   ArrowUp,
   BatteryCharging,
   Cpu,
-  FileLock2,
-  Gpu,
-  HardDrive,
-  MemoryStick,
-  Network,
-  RefreshCw,
+  FileLock as FileLock2,
+  GraphicsCard as Gpu,
+  HardDrives as HardDrive,
+  Lightning as Zap,
+  Memory as MemoryStick,
+  ShareNetwork as Network,
   Thermometer,
-  Wifi,
-  Zap,
-} from "lucide-react";
+  Warning as AlertTriangle,
+  WifiHigh as Wifi,
+} from "@phosphor-icons/react";
 import { Sparkline } from "../components/charts/Sparkline";
 import {
   formatBytes,
@@ -137,13 +137,13 @@ export const OverviewView: React.FC<OverviewViewProps> = React.memo(({
           <div className="flex items-start justify-between gap-2">
             <div className="flex items-center gap-2.5 min-w-0">
               <div
-                className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0"
+                className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0 duotone-glass-badge"
                 style={{
                   backgroundColor: "var(--accent-cpu-soft)",
                   color: "var(--accent-cpu)",
                 }}
               >
-                <Cpu className="w-4.5 h-4.5" />
+                <Cpu className="w-5 h-5" />
               </div>
               <div className="min-w-0">
                 <div className="text-xs font-semibold">Prozessor (CPU)</div>
@@ -246,13 +246,13 @@ export const OverviewView: React.FC<OverviewViewProps> = React.memo(({
           <div className="flex items-start justify-between gap-2">
             <div className="flex items-center gap-2.5">
               <div
-                className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0"
+                className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0 duotone-glass-badge"
                 style={{
                   backgroundColor: "var(--accent-ram-soft)",
                   color: "var(--accent-ram)",
                 }}
               >
-                <MemoryStick className="w-4.5 h-4.5" />
+                <MemoryStick className="w-5 h-5" />
               </div>
               <div>
                 <div className="text-xs font-semibold">Arbeitsspeicher (RAM)</div>
@@ -357,13 +357,13 @@ export const OverviewView: React.FC<OverviewViewProps> = React.memo(({
           <div className="flex items-start justify-between gap-2">
             <div className="flex items-center gap-2.5 min-w-0">
               <div
-                className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0"
+                className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0 duotone-glass-badge"
                 style={{
                   backgroundColor: "var(--accent-gpu-soft)",
                   color: "var(--accent-gpu)",
                 }}
               >
-                <Gpu className="w-4.5 h-4.5" />
+                <Gpu className="w-5 h-5" />
               </div>
               <div className="min-w-0">
                 <div className="text-xs font-semibold">Grafikkarte (GPU)</div>
@@ -462,13 +462,13 @@ export const OverviewView: React.FC<OverviewViewProps> = React.memo(({
           <div className="flex items-start justify-between gap-2 min-w-0">
             <div className="flex items-center gap-2.5 min-w-0">
               <div
-                className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0"
+                className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0 duotone-glass-badge"
                 style={{
                   backgroundColor: "var(--accent-disk-soft)",
                   color: "var(--accent-disk)",
                 }}
               >
-                <HardDrive className="w-4.5 h-4.5" />
+                <HardDrive className="w-5 h-5" />
               </div>
               <div className="min-w-0">
                 <div className="text-xs font-semibold truncate">Datenträger</div>
@@ -559,13 +559,13 @@ export const OverviewView: React.FC<OverviewViewProps> = React.memo(({
           <div className="flex items-start justify-between gap-2 min-w-0">
             <div className="flex items-center gap-2.5 min-w-0">
               <div
-                className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0"
+                className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0 duotone-glass-badge"
                 style={{
                   backgroundColor: "var(--accent-net-soft)",
                   color: "var(--accent-net)",
                 }}
               >
-                <Wifi className="w-4.5 h-4.5" />
+                <Wifi className="w-5 h-5" />
               </div>
               <div className="min-w-0">
                 <div className="text-xs font-semibold truncate">Netzwerk</div>
@@ -656,8 +656,8 @@ export const OverviewView: React.FC<OverviewViewProps> = React.memo(({
         >
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2.5 min-w-0">
-              <div className="w-9 h-9 rounded-xl flex items-center justify-center bg-indigo-500/15 text-indigo-500 shrink-0">
-                <BatteryCharging className="w-4.5 h-4.5" />
+              <div className="w-9 h-9 rounded-xl flex items-center justify-center bg-indigo-500/15 text-indigo-500 shrink-0 duotone-glass-badge">
+                <BatteryCharging className="w-5 h-5" />
               </div>
               <div className="min-w-0">
                 <div className="text-xs font-semibold truncate">

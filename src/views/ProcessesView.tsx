@@ -1,29 +1,29 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  ArrowClockwise as RotateCw,
   ArrowDown,
+  ArrowsInSimple as Minimize2,
   ArrowUp,
-  ChevronDown,
-  ChevronRight,
+  CaretDown as ChevronDown,
+  CaretRight as ChevronRight,
   Crosshair,
-  Download,
+  DownloadSimple as Download,
   Eye,
   FolderOpen,
   GitFork,
-  Layers,
   Leaf,
   List,
   Lock,
-  Minimize2,
+  LockOpen as Unlock,
+  MagnifyingGlass as Search,
   Pause,
   Play,
-  RotateCw,
-  Search,
   Shield,
   Skull,
   Snowflake,
-  Trash2,
-  Unlock,
-} from "lucide-react";
+  Stack as Layers,
+  Trash as Trash2,
+} from "@phosphor-icons/react";
 import { Sparkline } from "../components/charts/Sparkline";
 import {
   getCachedProcessIcon,
@@ -849,7 +849,7 @@ export const ProcessesView: React.FC<ProcessesViewProps> = React.memo(
       const tsTag = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
       try {
         const path = await api.saveFile(
-          `pulse-processes-${tsTag}.csv`,
+          `spektr-processes-${tsTag}.csv`,
           "CSV-Tabelle",
           ["csv"]
         );

@@ -1,22 +1,22 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import {
-  CheckCircle2,
-  Cog,
-  FileLock2,
+  ArrowClockwise as RotateCw,
+  ArrowsClockwise as RefreshCw,
+  CheckCircle as CheckCircle2,
+  FileLock as FileLock2,
+  FolderLock as FolderSearch,
   FolderOpen,
-  FolderSearch,
+  GearSix as Cog,
+  MagnifyingGlass as Search,
   Play,
   Plus,
-  RefreshCw,
-  Rocket,
-  RotateCw,
-  Search,
+  RocketLaunch as Rocket,
   SlidersHorizontal,
-  Square,
-  Trash2,
-  Upload,
-} from "lucide-react";
+  Stop as Square,
+  Trash as Trash2,
+  UploadSimple as Upload,
+} from "@phosphor-icons/react";
 import { api } from "../lib/tauri";
 import {
   ActionResult,
@@ -778,13 +778,13 @@ export const SystemToolsView: React.FC<SystemToolsViewProps> = React.memo(
           <div className="fluent-card p-6 flex flex-col gap-5 max-w-3xl">
             <div className="flex items-start gap-3">
               <div
-                className="w-11 h-11 rounded-2xl flex items-center justify-center shrink-0"
+                className="w-11 h-11 rounded-2xl flex items-center justify-center shrink-0 duotone-glass-badge"
                 style={{
                   backgroundColor: "var(--accent-net-soft)",
                   color: "var(--accent-net)",
                 }}
               >
-                <FileLock2 className="w-5 h-5" />
+                <FileLock2 className="w-5.5 h-5.5" />
               </div>
               <div>
                 <h3 className="text-base font-semibold">
@@ -795,7 +795,7 @@ export const SystemToolsView: React.FC<SystemToolsViewProps> = React.memo(
                   style={{ color: "var(--text-secondary)" }}
                 >
                   Wähle eine Datei bzw. einen Ordner aus oder ziehe das Objekt
-                  einfach per Drag &amp; Drop hier hinein. Pulse ermittelt über
+                  einfach per Drag &amp; Drop hier hinein. Spektr ermittelt über
                   die native Windows Restart Manager API sofort blockierende
                   Prozesse.
                 </p>

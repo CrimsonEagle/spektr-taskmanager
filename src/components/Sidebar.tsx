@@ -1,16 +1,16 @@
 import React from "react";
 import { motion } from "framer-motion";
 import {
-  Activity,
   Cpu,
   Flame,
   Gauge,
-  LayoutDashboard,
   Leaf,
-  ListTree,
-  Network,
+  Pulse as Activity,
+  ShareNetwork as Network,
+  SquaresFour as LayoutDashboard,
+  TreeStructure as ListTree,
   Wrench,
-} from "lucide-react";
+} from "@phosphor-icons/react";
 import { formatDuration } from "../lib/format";
 import { APP_VERSION } from "../lib/version";
 import { NavTab, TelemetrySnapshot } from "../types/telemetry";

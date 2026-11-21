@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { motion } from "framer-motion";
-import { Monitor, Moon, Settings, Sun, X } from "lucide-react";
+import { GearSix as Settings, Monitor, Moon, Sun, X } from "@phosphor-icons/react";
 import {
   AppSettings,
   HudMetricsConfig,
@@ -15,7 +15,8 @@ interface SettingsModalProps {
   themePreference: ThemePreference;
   onSetTheme: (pref: ThemePreference) => void;
   onSetRefreshMs: (ms: RefreshRateMs) => void;
-  onSetMinimizeToTray: (enabled: boolean) => void;
+  onSetCloseToTray: (enabled: boolean) => void;
+  onSetMinimizeToTrayOnMinimize: (enabled: boolean) => void;
   onSetTrayCpuIcon: (enabled: boolean) => void;
   onToggleTitleBarMetric: (key: keyof TitleBarMetricsConfig) => void;
   onToggleHudMetric: (key: keyof HudMetricsConfig) => void;
@@ -81,7 +82,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = React.memo(
     themePreference,
     onSetTheme,
     onSetRefreshMs,
-    onSetMinimizeToTray,
+    onSetCloseToTray,
+    onSetMinimizeToTrayOnMinimize,
     onSetTrayCpuIcon,
     onToggleTitleBarMetric,
     onToggleHudMetric,
@@ -341,9 +343,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = React.memo(
                 </div>
               </div>
 
-              {/* Minimize to Tray */}
+              {/* Minimize to Tray (Zero-WebView RAM saving) */}
               <div
-                className="p-3 rounded-xl border flex items-center justify-between gap-3"
+                className="p-3 rounded-xl border flex flex-col gap-2.5"
                 style={{
                   backgroundColor: "var(--bg-subtle)",
                   borderColor: "var(--border-subtle)",
@@ -355,14 +357,54 @@ export const SettingsModal: React.FC<SettingsModalProps> = React.memo(
                     className="text-[11px]"
                     style={{ color: "var(--text-muted)" }}
                   >
-                    Beim Schließen im Hintergrund im Infobereich weiterlaufen
+                    Beendet die WebView2-Prozesse zur Speichereinsparung; nur der
+                    schlanke Hintergrunddienst bleibt im Tray aktiv
                   </div>
                 </div>
-                <ToggleSwitch
-                  checked={settings.minimizeToTray}
-                  onChange={() => onSetMinimizeToTray(!settings.minimizeToTray)}
-                  label="In System-Tray minimieren"
-                />
+
+                <div
+                  className="flex items-center justify-between gap-3 pt-2 border-t"
+                  style={{ borderColor: "var(--border-subtle)" }}
+                >
+                  <div>
+                    <div className="font-medium">Beim Schließen (×)</div>
+                    <div
+                      className="text-[11px]"
+                      style={{ color: "var(--text-muted)" }}
+                    >
+                      Fenster schließen parkt Spektr im Tray statt die App zu beenden
+                    </div>
+                  </div>
+                  <ToggleSwitch
+                    checked={settings.closeToTray}
+                    onChange={() => onSetCloseToTray(!settings.closeToTray)}
+                    label="Beim Schließen in System-Tray minimieren"
+                  />
+                </div>
+
+                <div
+                  className="flex items-center justify-between gap-3 pt-2 border-t"
+                  style={{ borderColor: "var(--border-subtle)" }}
+                >
+                  <div>
+                    <div className="font-medium">Beim regulären Minimieren (—)</div>
+                    <div
+                      className="text-[11px]"
+                      style={{ color: "var(--text-muted)" }}
+                    >
+                      Minimieren über Titelleiste oder Taskleiste parkt ebenfalls im Tray
+                    </div>
+                  </div>
+                  <ToggleSwitch
+                    checked={settings.minimizeToTrayOnMinimize}
+                    onChange={() =>
+                      onSetMinimizeToTrayOnMinimize(
+                        !settings.minimizeToTrayOnMinimize
+                      )
+                    }
+                    label="Beim regulären Minimieren in System-Tray minimieren"
+                  />
+                </div>
               </div>
 
               {/* Live CPU Tray Icon */}

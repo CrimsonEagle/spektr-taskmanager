@@ -1,18 +1,18 @@
 import React, { useEffect, useMemo } from "react";
 import {
-  Activity,
   ArrowDown,
+  ArrowsOutSimple as Maximize2,
   ArrowUp,
   BatteryCharging,
-  HardDrive,
-  Maximize2,
-  Settings,
+  GearSix as Settings,
+  HardDrives as HardDrive,
   X,
-} from "lucide-react";
+} from "@phosphor-icons/react";
 import { HudMetricsConfig } from "../hooks/useSettings";
 import { formatBytes, formatSpeed } from "../lib/format";
 import { api } from "../lib/tauri";
 import { TelemetrySnapshot } from "../types/telemetry";
+import { SpektrLogo } from "./SpektrLogo";
 
 interface MiniHudProps {
   snapshot: TelemetrySnapshot | null;
@@ -131,10 +131,8 @@ export const MiniHud: React.FC<MiniHudProps> = React.memo(
         {/* Top Bar */}
         <div className="flex items-center justify-between shrink-0">
           <div className="flex items-center gap-1.5">
-            <div className="w-5 h-5 rounded-md flex items-center justify-center bg-gradient-to-br from-sky-500 via-indigo-500 to-violet-500 text-white">
-              <Activity className="w-3 h-3" />
-            </div>
-            <span className="text-xs font-semibold">Pulse HUD</span>
+            <SpektrLogo size={20} />
+            <span className="text-xs font-semibold">Spektr HUD</span>
           </div>
 
           <div className="flex items-center gap-1">

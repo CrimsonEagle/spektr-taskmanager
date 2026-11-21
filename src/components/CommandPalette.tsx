@@ -1,21 +1,21 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import {
-  Activity,
+  ArrowsClockwise as RefreshCw,
   Flame,
-  LayoutDashboard,
   Leaf,
-  ListTree,
+  MagnifyingGlass as Search,
   Monitor,
   Moon,
-  Network,
-  PictureInPicture2,
-  RefreshCw,
-  Search,
+  PictureInPicture as PictureInPicture2,
+  Pulse as Activity,
+  ShareNetwork as Network,
+  SquaresFour as LayoutDashboard,
   Sun,
-  Trash2,
+  Trash as Trash2,
+  TreeStructure as ListTree,
   Wrench,
-} from "lucide-react";
+} from "@phosphor-icons/react";
 import { formatBytes, getCategoryMeta } from "../lib/format";
 import { api } from "../lib/tauri";
 import {
@@ -164,7 +164,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
       {
         id: "nav-overview",
         group: "Ansichten",
-        title: "Übersicht (Pulse Dashboard)",
+        title: "Übersicht (Spektr Dashboard)",
         icon: <LayoutDashboard className="w-4 h-4 text-sky-500" />,
         run: () => {
           onNavigate("overview");

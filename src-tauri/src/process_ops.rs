@@ -827,7 +827,7 @@ pub fn pick_window_pid_blocking() -> Result<Option<u32>, String> {
                         }
                     }
                 }
-                // Wait for button release before retrying if user clicked Pulse itself
+                // Wait for button release before retrying if user clicked Spektr itself
                 for _ in 0..40 {
                     if (GetAsyncKeyState(VK_LBUTTON.0 as i32) as u16 & 0x8000) == 0 {
                         break;

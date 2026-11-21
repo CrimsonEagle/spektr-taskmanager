@@ -57,7 +57,7 @@ mod win_impl {
     const INVALID_PROCESSTRACE_HANDLE_VALUE: u64 = u64::MAX;
 
     /// Unique ETW session name so we never conflict with "NT Kernel Logger" or Task Manager.
-    const SESSION_NAME: &str = "PulseTaskManagerNetTrace";
+    const SESSION_NAME: &str = "SpektrTaskManagerNetTrace";
 
     /// Microsoft-Windows-Kernel-Network provider GUID:
     /// `{7DD42A49-5329-4832-8DFD-43D979153A88}`
@@ -94,7 +94,7 @@ mod win_impl {
         (buf, (u64_len * 8) as u32)
     }
 
-    /// Stop any existing `PulseTaskManagerNetTrace` session (e.g. leftover from a previous run
+    /// Stop any existing `SpektrTaskManagerNetTrace` session (e.g. leftover from a previous run
     /// or during graceful app exit).
     pub fn stop_session_by_name() {
         let name_wide = wide_session_name();
@@ -278,7 +278,7 @@ mod win_impl {
 
             let raw_trace_handle = trace_handle.Value;
             let spawn_res = std::thread::Builder::new()
-                .name("pulse-net-etw".into())
+                .name("spektr-net-etw".into())
                 .spawn(move || {
                     // Keep `shared_for_thread` alive for the entire duration of `ProcessTrace`
                     // so `EVENT_RECORD.UserContext` remains valid until `ProcessTrace` exits.

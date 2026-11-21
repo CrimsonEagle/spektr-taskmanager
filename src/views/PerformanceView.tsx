@@ -1,22 +1,22 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
-  AlertTriangle,
-  ArrowUpDown,
+  ArrowsDownUp as ArrowUpDown,
+  ClockCounterClockwise as History,
   Cpu,
-  Download,
+  DownloadSimple as Download,
   Fan,
   Gauge,
-  Gpu,
-  HardDrive,
-  History,
+  GraphicsCard as Gpu,
+  HardDrives as HardDrive,
   Info,
-  MemoryStick,
+  Lightning as Zap,
+  Memory as MemoryStick,
   Shield,
   Thermometer,
-  Wifi,
+  Warning as AlertTriangle,
+  WifiHigh as Wifi,
   X,
-  Zap,
-} from "lucide-react";
+} from "@phosphor-icons/react";
 import { InteractiveAreaChart } from "../components/charts/InteractiveAreaChart";
 import { Sparkline } from "../components/charts/Sparkline";
 import {
@@ -709,7 +709,7 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
 
     try {
       const path = await api.saveFile(
-        `pulse-performance-${metric}-${tsTag}.${extMap.ext}`,
+        `spektr-performance-${metric}-${tsTag}.${extMap.ext}`,
         extMap.name,
         [extMap.ext]
       );
@@ -775,7 +775,7 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
       } else {
         const spikesList = exportPoints.filter((p) => p.isSpike);
         const mdLines = [
-          `# Pulse Performance-Bericht (${metricConfig.label})`,
+          `# Spektr Performance-Bericht (${metricConfig.label})`,
           "",
           `- **Host**: ${snapshot.system.hostname} (${snapshot.system.osName})`,
           `- **Zeitraum**: ${formatTimeShort(analytics.startMs)} – ${formatTimeShort(analytics.endMs)} (${exportPoints.length} Samples)`,

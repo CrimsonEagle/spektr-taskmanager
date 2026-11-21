@@ -1,12 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { Activity } from "lucide-react";
 import { CommandPalette } from "./components/CommandPalette";
 import { computeMiniHudHeight, MiniHud } from "./components/MiniHud";
 import { ProcessInspector } from "./components/ProcessInspector";
 import { RunTaskModal } from "./components/RunTaskModal";
 import { SettingsModal } from "./components/SettingsModal";
 import { Sidebar } from "./components/Sidebar";
+import { SpektrLogo } from "./components/SpektrLogo";
 import { TitleBar } from "./components/TitleBar";
 import { ToastContainer } from "./components/ToastContainer";
 import { useSettings } from "./hooks/useSettings";
@@ -83,7 +83,8 @@ export function App() {
   const {
     settings,
     setRefreshMs,
-    setMinimizeToTray,
+    setCloseToTray,
+    setMinimizeToTrayOnMinimize,
     setTrayCpuIcon,
     toggleTitleBarMetric,
     toggleHudMetric,
@@ -154,8 +155,10 @@ export function App() {
   }, [telemetryPaused]);
 
   useEffect(() => {
-    api.setMinimizeToTray(settings.minimizeToTray).catch(() => {});
-  }, [settings.minimizeToTray]);
+    api
+      .setTrayBehavior(settings.closeToTray, settings.minimizeToTrayOnMinimize)
+      .catch(() => {});
+  }, [settings.closeToTray, settings.minimizeToTrayOnMinimize]);
 
   useEffect(() => {
     api.setTrayCpuIcon(settings.trayCpuIcon).catch(() => {});
@@ -355,10 +358,18 @@ export function App() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [paletteOpen, runTaskOpen, settingsOpen, selectedPid, handleActionFeedback]);
 
-  // Tray icon "Mini-HUD umschalten" event
+  // Tray icon "Mini-HUD umschalten" event (and startup handoff when reopened from Zero-WebView tray)
   useEffect(() => {
     let mounted = true;
     let unlisten: (() => void) | null = null;
+    api
+      .takePendingMiniHud()
+      .then((pending) => {
+        if (mounted && pending) {
+          toggleMiniHud(true);
+        }
+      })
+      .catch(() => {});
     api
       .subscribeMiniHudToggle(() => toggleMiniHud())
       .then((fn) => {
@@ -450,6 +461,8 @@ export function App() {
         isElevated={isElevated}
         pickingWindow={pickingWindow}
         titleBarMetrics={settings.titleBarMetrics}
+        closeToTray={settings.closeToTray}
+        minimizeToTrayOnMinimize={settings.minimizeToTrayOnMinimize}
         onTogglePause={handleTogglePause}
         onRestartAsAdmin={handleRestartAsAdmin}
         onPickWindow={handlePickWindow}
@@ -471,9 +484,7 @@ export function App() {
         <main className="flex-1 overflow-y-auto stable-scroll p-5 min-w-0">
           {!snapshot ? (
             <div className="h-full flex flex-col items-center justify-center gap-3">
-              <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-sky-500 via-indigo-500 to-violet-500 text-white flex items-center justify-center animate-pulse">
-                <Activity className="w-6 h-6" />
-              </div>
+              <SpektrLogo size={48} className="animate-pulse drop-shadow-md" />
               <div
                 className="text-sm font-medium"
                 style={{ color: "var(--text-secondary)" }}
@@ -599,7 +610,8 @@ export function App() {
             themePreference={preference}
             onSetTheme={setPreference}
             onSetRefreshMs={setRefreshMs}
-            onSetMinimizeToTray={setMinimizeToTray}
+            onSetCloseToTray={setCloseToTray}
+            onSetMinimizeToTrayOnMinimize={setMinimizeToTrayOnMinimize}
             onSetTrayCpuIcon={setTrayCpuIcon}
             onToggleTitleBarMetric={toggleTitleBarMetric}
             onToggleHudMetric={toggleHudMetric}

@@ -19,12 +19,67 @@ use models::{
     ProcessAffinityInfo, ProcessEnvInfo, ProcessModulesThreads, ProcessRule, ProcessSecurityInfo,
     ServiceEntry, StartupEntry, TelemetrySnapshot,
 };
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
 use telemetry::TelemetryEngine;
+
+fn default_refresh_ms() -> u64 {
+    1000
+}
+
+fn default_true() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct BackendPrefs {
+    #[serde(default = "default_refresh_ms")]
+    refresh_ms: u64,
+    #[serde(default, alias = "minimize_to_tray")]
+    close_to_tray: bool,
+    #[serde(default)]
+    minimize_to_tray_on_minimize: bool,
+    #[serde(default = "default_true")]
+    tray_cpu_icon: bool,
+}
+
+impl Default for BackendPrefs {
+    fn default() -> Self {
+        Self {
+            refresh_ms: 1000,
+            close_to_tray: false,
+            minimize_to_tray_on_minimize: false,
+            tray_cpu_icon: true,
+        }
+    }
+}
+
+fn load_backend_prefs(path: &PathBuf) -> Option<BackendPrefs> {
+    let raw = std::fs::read_to_string(path).ok()?;
+    serde_json::from_str::<BackendPrefs>(&raw).ok()
+}
+
+fn save_backend_prefs(state: &AppState) {
+    let Some(path) = state.prefs_path.lock().ok().and_then(|g| g.clone()) else {
+        return;
+    };
+    let prefs = BackendPrefs {
+        refresh_ms: state.refresh_ms.lock().map(|g| *g).unwrap_or(1000),
+        close_to_tray: state.close_to_tray.load(Ordering::Relaxed),
+        minimize_to_tray_on_minimize: state.minimize_to_tray_on_minimize.load(Ordering::Relaxed),
+        tray_cpu_icon: state.tray_cpu_icon.load(Ordering::Relaxed),
+    };
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Ok(json) = serde_json::to_string_pretty(&prefs) {
+        let _ = std::fs::write(path, json);
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct UiState {
@@ -54,9 +109,120 @@ pub struct AppState {
     pub ui_state: Arc<Mutex<UiState>>,
     pub wake_signal: Arc<(Mutex<u64>, Condvar)>,
     pub paused: Arc<AtomicBool>,
-    pub minimize_to_tray: Arc<AtomicBool>,
+    pub close_to_tray: Arc<AtomicBool>,
+    pub minimize_to_tray_on_minimize: Arc<AtomicBool>,
     pub tray_cpu_icon: Arc<AtomicBool>,
     pub rule_store: Arc<Mutex<rules::RuleStore>>,
+    pub prefs_path: Arc<Mutex<Option<PathBuf>>>,
+    pub explicit_exit: Arc<AtomicBool>,
+    pub tray_parked: Arc<AtomicBool>,
+    pub pending_mini_hud: Arc<AtomicBool>,
+    pub was_maximized: Arc<AtomicBool>,
+    pub window_lock: Arc<Mutex<()>>,
+}
+
+#[cfg(windows)]
+fn apply_low_memory_webview2(win: &tauri::WebviewWindow) {
+    use webview2_com::Microsoft::Web::WebView2::Win32::{
+        ICoreWebView2_19, COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_LOW,
+    };
+    use windows_core::Interface;
+
+    let _ = win.with_webview(|webview| unsafe {
+        if let Ok(core) = webview.controller().CoreWebView2() {
+            if let Ok(core19) = core.cast::<ICoreWebView2_19>() {
+                let _ = core19
+                    .SetMemoryUsageTargetLevel(COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_LOW);
+            }
+        }
+    });
+}
+
+#[cfg(not(windows))]
+fn apply_low_memory_webview2(_win: &tauri::WebviewWindow) {}
+
+fn open_or_focus_main_window(app: &AppHandle, start_maximized: bool, open_as_mini_hud: bool) {
+    let state = app.state::<AppState>();
+    let _guard = state
+        .window_lock
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    state.tray_parked.store(false, Ordering::Relaxed);
+
+    if let Some(win) = app.get_webview_window("main") {
+        let _ = win.show();
+        let _ = win.unminimize();
+        let _ = win.set_focus();
+        if open_as_mini_hud {
+            let _ = win.emit("toggle-mini-hud", ());
+        }
+        if let Ok(mut ui) = state.ui_state.lock() {
+            ui.visible = true;
+        }
+        trigger_wake(&state.wake_signal);
+        return;
+    }
+
+    if open_as_mini_hud {
+        state.pending_mini_hud.store(true, Ordering::Relaxed);
+    } else {
+        state.pending_mini_hud.store(false, Ordering::Relaxed);
+    }
+
+    let mut builder = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
+        .title("Spektr Taskmanager")
+        .decorations(false)
+        .transparent(false)
+        .shadow(true)
+        .center()
+        .visible(false);
+
+    if open_as_mini_hud {
+        builder = builder
+            .inner_size(390.0, 240.0)
+            .min_inner_size(340.0, 140.0)
+            .always_on_top(true)
+            .resizable(false);
+    } else {
+        builder = builder
+            .inner_size(1340.0, 860.0)
+            .min_inner_size(960.0, 640.0)
+            .resizable(true);
+    }
+
+    if let Ok(win) = builder.build() {
+        apply_low_memory_webview2(&win);
+        if !open_as_mini_hud
+            && (start_maximized || state.was_maximized.load(Ordering::Relaxed))
+        {
+            let _ = win.maximize();
+        }
+        let _ = win.show();
+        let _ = win.set_focus();
+        if let Ok(mut ui) = state.ui_state.lock() {
+            ui.visible = true;
+            ui.mini_hud = open_as_mini_hud;
+        }
+        trigger_wake(&state.wake_signal);
+    }
+}
+
+fn park_to_tray(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    state.tray_parked.store(true, Ordering::Relaxed);
+    if let Some(win) = app.get_webview_window("main") {
+        let in_mini_hud = state
+            .ui_state
+            .lock()
+            .map(|u| u.mini_hud)
+            .unwrap_or(false);
+        if !in_mini_hud && !win.is_minimized().unwrap_or(false) {
+            state
+                .was_maximized
+                .store(win.is_maximized().unwrap_or(false), Ordering::Relaxed);
+        }
+        let _ = win.close();
+    }
 }
 
 fn trigger_wake(wake_signal: &(Mutex<u64>, Condvar)) {
@@ -122,6 +288,7 @@ fn set_refresh_interval(ms: u64, state: State<'_, AppState>) -> ActionResult {
     if let Ok(mut guard) = state.refresh_ms.lock() {
         *guard = clamped;
     }
+    save_backend_prefs(&state);
     trigger_wake(&state.wake_signal);
     ActionResult {
         ok: true,
@@ -274,8 +441,26 @@ fn set_telemetry_paused(state: State<'_, AppState>, paused: bool) -> Result<(), 
 }
 
 #[tauri::command]
-fn set_minimize_to_tray(state: State<'_, AppState>, enabled: bool) -> Result<(), String> {
-    state.minimize_to_tray.store(enabled, Ordering::Relaxed);
+fn set_tray_behavior(
+    state: State<'_, AppState>,
+    close_to_tray: bool,
+    minimize_to_tray: bool,
+) -> Result<(), String> {
+    state.close_to_tray.store(close_to_tray, Ordering::Relaxed);
+    state
+        .minimize_to_tray_on_minimize
+        .store(minimize_to_tray, Ordering::Relaxed);
+    save_backend_prefs(&state);
+    Ok(())
+}
+
+#[tauri::command]
+fn minimize_window(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    if state.minimize_to_tray_on_minimize.load(Ordering::Relaxed) {
+        park_to_tray(&app);
+    } else if let Some(win) = app.get_webview_window("main") {
+        let _ = win.minimize();
+    }
     Ok(())
 }
 
@@ -286,6 +471,7 @@ fn set_tray_cpu_icon(
     enabled: bool,
 ) -> Result<(), String> {
     state.tray_cpu_icon.store(enabled, Ordering::Relaxed);
+    save_backend_prefs(&state);
     if !enabled {
         if let Some(tray) = app.tray_by_id("main-tray") {
             if let Some(icon) = app.default_window_icon() {
@@ -296,6 +482,11 @@ fn set_tray_cpu_icon(
         trigger_wake(&state.wake_signal);
     }
     Ok(())
+}
+
+#[tauri::command]
+fn take_pending_mini_hud(state: State<'_, AppState>) -> bool {
+    state.pending_mini_hud.swap(false, Ordering::Relaxed)
 }
 
 #[tauri::command]
@@ -330,8 +521,9 @@ fn is_elevated() -> bool {
 }
 
 #[tauri::command]
-fn restart_as_admin(app: AppHandle) -> Result<(), String> {
+fn restart_as_admin(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
     process_ops::restart_as_admin()?;
+    state.explicit_exit.store(true, Ordering::Relaxed);
     app.exit(0);
     Ok(())
 }
@@ -466,32 +658,42 @@ fn control_service(name: String, action: String) -> ActionResult {
 }
 
 fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
-    let show_item = MenuItem::with_id(app, "show", "Pulse öffnen", true, None::<&str>)?;
+    let show_item = MenuItem::with_id(app, "show", "Spektr öffnen", true, None::<&str>)?;
     let hud_item = MenuItem::with_id(app, "hud", "Mini-HUD umschalten", true, None::<&str>)?;
+    let park_item = MenuItem::with_id(
+        app,
+        "park",
+        "In Tray minimieren (RAM sparen)",
+        true,
+        None::<&str>,
+    )?;
     let quit_item = MenuItem::with_id(app, "quit", "Beenden", true, None::<&str>)?;
 
-    let menu = Menu::with_items(app, &[&show_item, &hud_item, &quit_item])?;
+    let menu = Menu::with_items(app, &[&show_item, &hud_item, &park_item, &quit_item])?;
 
     let mut builder = TrayIconBuilder::with_id("main-tray")
         .menu(&menu)
-        .tooltip("Pulse Taskmanager")
+        .tooltip("Spektr Taskmanager")
         .on_menu_event(|app, event| match event.id.as_ref() {
             "show" => {
-                if let Some(win) = app.get_webview_window("main") {
-                    let _ = win.show();
-                    let _ = win.unminimize();
-                    let _ = win.set_focus();
-                }
-                trigger_wake(&app.state::<AppState>().wake_signal);
+                let app_clone = app.clone();
+                std::thread::spawn(move || {
+                    open_or_focus_main_window(&app_clone, false, false);
+                });
             }
             "hud" => {
-                if let Some(win) = app.get_webview_window("main") {
-                    let _ = win.show();
-                    let _ = win.emit("toggle-mini-hud", ());
-                }
-                trigger_wake(&app.state::<AppState>().wake_signal);
+                let app_clone = app.clone();
+                std::thread::spawn(move || {
+                    open_or_focus_main_window(&app_clone, false, true);
+                });
+            }
+            "park" => {
+                park_to_tray(app);
             }
             "quit" => {
+                app.state::<AppState>()
+                    .explicit_exit
+                    .store(true, Ordering::Relaxed);
                 app.exit(0);
             }
             _ => {}
@@ -503,13 +705,10 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
                 ..
             } = event
             {
-                let app = tray.app_handle();
-                if let Some(win) = app.get_webview_window("main") {
-                    let _ = win.show();
-                    let _ = win.unminimize();
-                    let _ = win.set_focus();
-                }
-                trigger_wake(&app.state::<AppState>().wake_signal);
+                let app_clone = tray.app_handle().clone();
+                std::thread::spawn(move || {
+                    open_or_focus_main_window(&app_clone, false, false);
+                });
             }
         });
 
@@ -530,9 +729,16 @@ pub fn run() {
     let ui_state = Arc::new(Mutex::new(UiState::default()));
     let wake_signal = Arc::new((Mutex::new(0u64), Condvar::new()));
     let paused = Arc::new(AtomicBool::new(false));
-    let minimize_to_tray = Arc::new(AtomicBool::new(false));
+    let close_to_tray = Arc::new(AtomicBool::new(false));
+    let minimize_to_tray_on_minimize = Arc::new(AtomicBool::new(false));
     let tray_cpu_icon = Arc::new(AtomicBool::new(true));
     let rule_store = Arc::new(Mutex::new(rules::RuleStore::load(None)));
+    let prefs_path: Arc<Mutex<Option<PathBuf>>> = Arc::new(Mutex::new(None));
+    let explicit_exit = Arc::new(AtomicBool::new(false));
+    let tray_parked = Arc::new(AtomicBool::new(false));
+    let pending_mini_hud = Arc::new(AtomicBool::new(false));
+    let was_maximized = Arc::new(AtomicBool::new(false));
+    let window_lock = Arc::new(Mutex::new(()));
 
     let bg_engine = Arc::clone(&engine);
     let bg_latest = Arc::clone(&latest);
@@ -544,6 +750,11 @@ pub fn run() {
     let bg_rules = Arc::clone(&rule_store);
     let setup_rules = Arc::clone(&rule_store);
     let setup_ui_state = Arc::clone(&ui_state);
+    let setup_prefs_path = Arc::clone(&prefs_path);
+    let setup_refresh = Arc::clone(&refresh_ms);
+    let setup_close_to_tray = Arc::clone(&close_to_tray);
+    let setup_minimize_to_tray_on_minimize = Arc::clone(&minimize_to_tray_on_minimize);
+    let setup_tray_cpu_icon = Arc::clone(&tray_cpu_icon);
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -554,26 +765,103 @@ pub fn run() {
             ui_state,
             wake_signal,
             paused,
-            minimize_to_tray,
+            close_to_tray,
+            minimize_to_tray_on_minimize,
             tray_cpu_icon,
             rule_store,
+            prefs_path,
+            explicit_exit,
+            tray_parked,
+            pending_mini_hud,
+            was_maximized,
+            window_lock,
         })
         .on_window_event(|window, event| {
             if window.label() == "main" {
-                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                    let state = window.state::<AppState>();
-                    if state.minimize_to_tray.load(Ordering::Relaxed) {
-                        api.prevent_close();
-                        let _ = window.hide();
-                        trigger_wake(&state.wake_signal);
+                let state = window.state::<AppState>();
+                match event {
+                    tauri::WindowEvent::Resized(_) => {
+                        let is_minimized = window.is_minimized().unwrap_or(false);
+                        if is_minimized {
+                            if state.minimize_to_tray_on_minimize.load(Ordering::Relaxed)
+                                && !state.tray_parked.swap(true, Ordering::Relaxed)
+                            {
+                                let app_clone = window.app_handle().clone();
+                                std::thread::spawn(move || {
+                                    park_to_tray(&app_clone);
+                                });
+                            }
+                        } else {
+                            let in_mini_hud = state
+                                .ui_state
+                                .lock()
+                                .map(|u| u.mini_hud)
+                                .unwrap_or(false);
+                            if !in_mini_hud && window.is_visible().unwrap_or(false) {
+                                state.was_maximized.store(
+                                    window.is_maximized().unwrap_or(false),
+                                    Ordering::Relaxed,
+                                );
+                            }
+                        }
                     }
+                    tauri::WindowEvent::CloseRequested { .. } => {
+                        let in_mini_hud = state
+                            .ui_state
+                            .lock()
+                            .map(|u| u.mini_hud)
+                            .unwrap_or(false);
+                        if !in_mini_hud && !window.is_minimized().unwrap_or(false) {
+                            state
+                                .was_maximized
+                                .store(window.is_maximized().unwrap_or(false), Ordering::Relaxed);
+                        }
+                        // Allow the WebviewWindow to actually close so all msedgewebview2.exe
+                        // child processes terminate ("Zero-WebView im Tray"). Keeping the
+                        // background daemon alive is handled in RunEvent::ExitRequested.
+                    }
+                    tauri::WindowEvent::Destroyed => {
+                        if let Ok(mut ui) = state.ui_state.lock() {
+                            ui.visible = false;
+                            ui.mini_hud = false;
+                            ui.palette_open = false;
+                            ui.inspected_pid = None;
+                        }
+                        state.paused.store(false, Ordering::Relaxed);
+                        trigger_wake(&state.wake_signal);
+                        let _ = process_ops::trim_working_set(std::process::id());
+                    }
+                    _ => {}
                 }
             }
         })
         .setup(move |app| {
+            if let Ok(data_dir) = app.path().app_data_dir() {
+                let rules_path = data_dir.join("process_rules.json");
+                if let Ok(mut guard) = setup_rules.lock() {
+                    *guard = rules::RuleStore::load(Some(rules_path));
+                }
+
+                let backend_prefs_path = data_dir.join("backend_prefs.json");
+                if let Some(prefs) = load_backend_prefs(&backend_prefs_path) {
+                    if let Ok(mut r) = setup_refresh.lock() {
+                        *r = prefs.refresh_ms.clamp(500, 5000);
+                    }
+                    setup_close_to_tray.store(prefs.close_to_tray, Ordering::Relaxed);
+                    setup_minimize_to_tray_on_minimize
+                        .store(prefs.minimize_to_tray_on_minimize, Ordering::Relaxed);
+                    setup_tray_cpu_icon.store(prefs.tray_cpu_icon, Ordering::Relaxed);
+                }
+                if let Ok(mut p) = setup_prefs_path.lock() {
+                    *p = Some(backend_prefs_path);
+                }
+            }
+
             let _ = setup_tray(app.handle());
 
-            // Apply requested startup window mode (normal / maximized / minimized to tray)
+            // Apply requested startup window mode (normal / maximized / minimized to tray).
+            // In minimized-to-tray mode we intentionally skip creating any WebView window so
+            // zero msedgewebview2.exe processes spawn until the user opens Spektr from the tray.
             let args: Vec<String> = std::env::args().collect();
             let start_minimized = args
                 .iter()
@@ -587,27 +875,13 @@ pub fn run() {
                 if let Ok(mut ui) = setup_ui_state.lock() {
                     ui.visible = false;
                 }
-                if let Some(win) = app.get_webview_window("main") {
-                    let _ = win.hide();
-                }
-            } else if let Some(win) = app.get_webview_window("main") {
-                if start_maximized {
-                    let _ = win.maximize();
-                }
-                let _ = win.show();
-                let _ = win.set_focus();
-            }
-
-            if let Ok(data_dir) = app.path().app_data_dir() {
-                let rules_path = data_dir.join("process_rules.json");
-                if let Ok(mut guard) = setup_rules.lock() {
-                    *guard = rules::RuleStore::load(Some(rules_path));
-                }
+            } else {
+                open_or_focus_main_window(app.handle(), start_maximized, false);
             }
 
             let handle = app.handle().clone();
             std::thread::Builder::new()
-                .name("pulse-telemetry".into())
+                .name("spektr-telemetry".into())
                 .spawn(move || {
                     let mut eng = TelemetryEngine::new();
                     // Short warm-up sleep so initial CPU delta is accurate
@@ -657,7 +931,7 @@ pub fn run() {
                                 let min = w.is_minimized().unwrap_or(false);
                                 !vis || min
                             })
-                            .unwrap_or(false);
+                            .unwrap_or(true);
 
                         let is_idle = (!ui_visible || win_hidden_or_min) && !mini_hud;
                         let base_delay = bg_refresh.lock().map(|g| *g).unwrap_or(1000);
@@ -709,7 +983,7 @@ pub fn run() {
                             // Update system tray tooltip & live 16x16 CPU chart icon every 2 ticks (also while in tray/idle)
                             if loop_tick % 2 == 1 {
                                 let tooltip = format!(
-                                    "Pulse Taskmanager — CPU {:.0}% | RAM {:.0}% | GPU {:.0}%",
+                                    "Spektr Taskmanager — CPU {:.0}% | RAM {:.0}% | GPU {:.0}%",
                                     snap_arc.cpu.total_usage,
                                     snap_arc.memory.usage_percent,
                                     snap_arc.gpu.usage_percent.unwrap_or(0.0),
@@ -756,7 +1030,7 @@ pub fn run() {
                                     let min = w.is_minimized().unwrap_or(false);
                                     !vis || min
                                 })
-                                .unwrap_or(false);
+                                .unwrap_or(true);
                             let emit_idle = (!ui_vis_now || win_hidden_now) && !mini_hud_now;
 
                             if !emit_idle {
@@ -791,9 +1065,11 @@ pub fn run() {
             set_refresh_interval,
             set_ui_state,
             set_telemetry_paused,
-            set_minimize_to_tray,
+            set_tray_behavior,
+            minimize_window,
             set_tray_cpu_icon,
             set_mini_hud,
+            take_pending_mini_hud,
             kill_process,
             kill_process_tree,
             set_process_suspended,
@@ -832,10 +1108,21 @@ pub fn run() {
             get_process_icons,
         ])
         .build(tauri::generate_context!())
-        .expect("Fehler beim Starten von Pulse Task Manager")
-        .run(|_app_handle, event| {
-            if let tauri::RunEvent::Exit = event {
+        .expect("Fehler beim Starten von Spektr Taskmanager")
+        .run(|app_handle, event| match event {
+            tauri::RunEvent::ExitRequested { api, code, .. } => {
+                let state = app_handle.state::<AppState>();
+                let is_explicit =
+                    code.is_some() || state.explicit_exit.load(Ordering::Relaxed);
+                let keep_alive = state.close_to_tray.load(Ordering::Relaxed)
+                    || state.tray_parked.load(Ordering::Relaxed);
+                if !is_explicit && keep_alive {
+                    api.prevent_exit();
+                }
+            }
+            tauri::RunEvent::Exit => {
                 net_etw::stop_session_by_name();
             }
+            _ => {}
         });
 }

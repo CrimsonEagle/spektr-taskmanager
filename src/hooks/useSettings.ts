@@ -22,13 +22,15 @@ export interface HudMetricsConfig {
 
 export interface AppSettings {
   refreshMs: RefreshRateMs;
-  minimizeToTray: boolean;
+  closeToTray: boolean;
+  minimizeToTrayOnMinimize: boolean;
   trayCpuIcon: boolean;
   titleBarMetrics: TitleBarMetricsConfig;
   hudMetrics: HudMetricsConfig;
 }
 
-const STORAGE_KEY = "pulse_app_settings_v2";
+const STORAGE_KEY = "spektr_app_settings_v2";
+const LEGACY_V2_KEY = "pulse_app_settings_v2";
 const LEGACY_REFRESH_KEY = "pulse_refresh_ms";
 const LEGACY_TRAY_KEY = "pulse_minimize_to_tray";
 
@@ -36,7 +38,8 @@ const VALID_REFRESH_MS = new Set<number>([500, 1000, 2000, 5000]);
 
 export const DEFAULT_SETTINGS: AppSettings = {
   refreshMs: 1000,
-  minimizeToTray: false,
+  closeToTray: false,
+  minimizeToTrayOnMinimize: false,
   trayCpuIcon: true,
   titleBarMetrics: {
     cpu: true,
@@ -58,18 +61,29 @@ export const DEFAULT_SETTINGS: AppSettings = {
 
 function loadInitialSettings(): AppSettings {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw =
+      localStorage.getItem(STORAGE_KEY) ?? localStorage.getItem(LEGACY_V2_KEY);
     if (raw) {
-      const parsed = JSON.parse(raw) as Partial<AppSettings>;
+      const parsed = JSON.parse(raw) as Partial<AppSettings> & {
+        minimizeToTray?: boolean;
+      };
       const refreshMs = VALID_REFRESH_MS.has(Number(parsed.refreshMs))
         ? (Number(parsed.refreshMs) as RefreshRateMs)
         : DEFAULT_SETTINGS.refreshMs;
+      const closeToTray =
+        typeof parsed.closeToTray === "boolean"
+          ? parsed.closeToTray
+          : typeof parsed.minimizeToTray === "boolean"
+            ? parsed.minimizeToTray
+            : DEFAULT_SETTINGS.closeToTray;
+      const minimizeToTrayOnMinimize =
+        typeof parsed.minimizeToTrayOnMinimize === "boolean"
+          ? parsed.minimizeToTrayOnMinimize
+          : DEFAULT_SETTINGS.minimizeToTrayOnMinimize;
       return {
         refreshMs,
-        minimizeToTray:
-          typeof parsed.minimizeToTray === "boolean"
-            ? parsed.minimizeToTray
-            : DEFAULT_SETTINGS.minimizeToTray,
+        closeToTray,
+        minimizeToTrayOnMinimize,
         trayCpuIcon:
           typeof parsed.trayCpuIcon === "boolean"
             ? parsed.trayCpuIcon
@@ -93,7 +107,7 @@ function loadInitialSettings(): AppSettings {
       refreshMs: VALID_REFRESH_MS.has(legacyRefresh)
         ? (legacyRefresh as RefreshRateMs)
         : DEFAULT_SETTINGS.refreshMs,
-      minimizeToTray: legacyTray,
+      closeToTray: legacyTray,
     };
   } catch {
     return DEFAULT_SETTINGS;
@@ -115,9 +129,16 @@ export function useSettings() {
     setSettings((prev) => ({ ...prev, refreshMs }));
   }, []);
 
-  const setMinimizeToTray = useCallback((minimizeToTray: boolean) => {
-    setSettings((prev) => ({ ...prev, minimizeToTray }));
+  const setCloseToTray = useCallback((closeToTray: boolean) => {
+    setSettings((prev) => ({ ...prev, closeToTray }));
   }, []);
+
+  const setMinimizeToTrayOnMinimize = useCallback(
+    (minimizeToTrayOnMinimize: boolean) => {
+      setSettings((prev) => ({ ...prev, minimizeToTrayOnMinimize }));
+    },
+    []
+  );
 
   const setTrayCpuIcon = useCallback((trayCpuIcon: boolean) => {
     setSettings((prev) => ({ ...prev, trayCpuIcon }));
@@ -149,7 +170,8 @@ export function useSettings() {
   return {
     settings,
     setRefreshMs,
-    setMinimizeToTray,
+    setCloseToTray,
+    setMinimizeToTrayOnMinimize,
     setTrayCpuIcon,
     toggleTitleBarMetric,
     toggleHudMetric,

@@ -1,6 +1,11 @@
 import React from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { AlertCircle, AlertTriangle, CheckCircle2, Info } from "lucide-react";
+import {
+  CheckCircle as CheckCircle2,
+  Info,
+  Warning as AlertTriangle,
+  WarningCircle as AlertCircle,
+} from "@phosphor-icons/react";
 import { ToastMessage } from "../types/telemetry";
 
 interface ToastContainerProps {

@@ -27,12 +27,14 @@ export const api = {
   setRefreshInterval: (ms: number) => invoke<ActionResult>("set_refresh_interval", { ms }),
   setTelemetryPaused: (paused: boolean) =>
     invoke<void>("set_telemetry_paused", { paused }),
-  setMinimizeToTray: (enabled: boolean) =>
-    invoke<void>("set_minimize_to_tray", { enabled }),
+  setTrayBehavior: (closeToTray: boolean, minimizeToTray: boolean) =>
+    invoke<void>("set_tray_behavior", { closeToTray, minimizeToTray }),
+  minimizeWindow: () => invoke<void>("minimize_window"),
   setTrayCpuIcon: (enabled: boolean) =>
     invoke<void>("set_tray_cpu_icon", { enabled }),
   setMiniHud: (enabled: boolean, height?: number) =>
     invoke<void>("set_mini_hud", { enabled, height: height ?? null }),
+  takePendingMiniHud: () => invoke<boolean>("take_pending_mini_hud"),
   setUiState: (payload: {
     visible: boolean;
     activeTab: string;

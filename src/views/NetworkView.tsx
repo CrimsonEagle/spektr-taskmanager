@@ -1,14 +1,14 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowDown,
+  ArrowsClockwise as RefreshCw,
   ArrowUp,
   Globe,
-  RefreshCw,
-  Search,
-  Trash2,
-  Wifi,
+  MagnifyingGlass as Search,
+  Trash as Trash2,
+  WifiHigh as Wifi,
   X,
-} from "lucide-react";
+} from "@phosphor-icons/react";
 import {
   formatBytes,
   formatSpeed,
@@ -202,13 +202,13 @@ export const NetworkView: React.FC<NetworkViewProps> = React.memo(({
             <div className="flex items-center justify-between gap-2">
               <div className="flex items-center gap-2 min-w-0">
                 <span
-                  className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0"
+                  className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0 duotone-glass-badge"
                   style={{
                     backgroundColor: "var(--accent-net-soft)",
                     color: "var(--accent-net)",
                   }}
                 >
-                  <Wifi className="w-3.5 h-3.5" />
+                  <Wifi className="w-4 h-4" />
                 </span>
                 <span className="text-xs font-semibold truncate">
                   {iface.name}

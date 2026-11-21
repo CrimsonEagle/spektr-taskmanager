@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
-import { Play, Terminal, X } from "lucide-react";
+import { Play, Terminal, X } from "@phosphor-icons/react";
 import { api } from "../lib/tauri";
 import { ActionResult } from "../types/telemetry";
 

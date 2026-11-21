@@ -1,5 +1,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    pulse_taskmanager_lib::run()
+    spektr_taskmanager_lib::run()
 }

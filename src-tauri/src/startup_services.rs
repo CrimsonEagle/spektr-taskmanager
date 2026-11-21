@@ -1,7 +1,8 @@
 use crate::models::{ActionResult, AutostartConfig, ServiceEntry, StartupEntry};
 use std::collections::HashMap;
 
-const AUTOSTART_VALUE_NAME: &str = "Pulse Taskmanager";
+const AUTOSTART_VALUE_NAME: &str = "Spektr Taskmanager";
+const LEGACY_AUTOSTART_VALUE_NAME: &str = "Pulse Taskmanager";
 const RUN_KEY_PATH: &str = "Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 const STARTUP_APPROVED_RUN_PATH: &str =
     "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StartupApproved\\Run";
@@ -110,7 +111,12 @@ pub fn set_autostart_config(enabled: bool, mode: &str) -> Result<AutostartConfig
             )
             .is_ok()
             {
+                let legacy_wide: Vec<u16> = LEGACY_AUTOSTART_VALUE_NAME
+                    .encode_utf16()
+                    .chain(std::iter::once(0))
+                    .collect();
                 let _ = RegDeleteValueW(hkey, PCWSTR(wide_name.as_ptr()));
+                let _ = RegDeleteValueW(hkey, PCWSTR(legacy_wide.as_ptr()));
                 let _ = RegCloseKey(hkey);
             }
         }

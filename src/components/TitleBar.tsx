@@ -1,23 +1,23 @@
 import React, { useEffect, useState } from "react";
 import {
-  Activity,
+  ArrowsInSimple as Minimize2,
+  ArrowsOutSimple as Maximize2,
   Command,
   Crosshair,
-  Maximize2,
-  Minimize2,
+  GearSix as Settings,
   Minus,
   Pause,
-  PictureInPicture2,
+  PictureInPicture as PictureInPicture2,
   Play,
-  Settings,
   Shield,
   ShieldCheck,
   X,
-} from "lucide-react";
+} from "@phosphor-icons/react";
 import { TitleBarMetricsConfig } from "../hooks/useSettings";
 import { formatSpeed } from "../lib/format";
 import { api } from "../lib/tauri";
 import { PerformanceMetric, TelemetrySnapshot } from "../types/telemetry";
+import { SpektrLogo } from "./SpektrLogo";
 
 interface TitleBarProps {
   snapshot: TelemetrySnapshot | null;
@@ -25,6 +25,8 @@ interface TitleBarProps {
   isElevated: boolean | null;
   pickingWindow: boolean;
   titleBarMetrics: TitleBarMetricsConfig;
+  closeToTray: boolean;
+  minimizeToTrayOnMinimize: boolean;
   onTogglePause: () => void;
   onRestartAsAdmin: () => void;
   onPickWindow: () => void;
@@ -41,6 +43,8 @@ export const TitleBar: React.FC<TitleBarProps> = React.memo(
     isElevated,
     pickingWindow,
     titleBarMetrics,
+    closeToTray,
+    minimizeToTrayOnMinimize,
     onTogglePause,
     onRestartAsAdmin,
     onPickWindow,
@@ -106,11 +110,9 @@ export const TitleBar: React.FC<TitleBarProps> = React.memo(
         {/* Left: Brand & Clickable Live Telemetry Pills */}
         <div className="flex items-center gap-2.5 min-w-0">
           <div className="flex items-center gap-2 shrink-0">
-            <div className="w-6 h-6 rounded-lg flex items-center justify-center bg-gradient-to-br from-sky-500 via-indigo-500 to-violet-500 text-white shadow-sm">
-              <Activity className="w-3.5 h-3.5 stroke-[2.5]" />
-            </div>
+            <SpektrLogo size={24} className="shadow-sm" />
             <span className="font-semibold text-sm tracking-tight">
-              Pulse Taskmanager
+              Spektr Taskmanager
             </span>
           </div>
 
@@ -360,12 +362,16 @@ export const TitleBar: React.FC<TitleBarProps> = React.memo(
           />
 
           <button
-            onClick={() => api.window.minimize()}
+            onClick={() => api.minimizeWindow()}
             className="w-8 h-7 rounded-md flex items-center justify-center transition-colors cursor-pointer hover:bg-[var(--bg-surface-hover)]"
             style={{ color: "var(--text-secondary)" }}
-            title="Minimieren"
+            title={
+              minimizeToTrayOnMinimize
+                ? "In System-Tray minimieren (RAM sparen)"
+                : "Minimieren"
+            }
           >
-            <Minus className="w-3.5 h-3.5" />
+            <Minus weight="bold" className="w-3.5 h-3.5" />
           </button>
           <button
             onClick={handleToggleMax}
@@ -374,18 +380,22 @@ export const TitleBar: React.FC<TitleBarProps> = React.memo(
             title={isMaximized ? "Verkleinern" : "Maximieren"}
           >
             {isMaximized ? (
-              <Minimize2 className="w-3.5 h-3.5" />
+              <Minimize2 weight="bold" className="w-3.5 h-3.5" />
             ) : (
-              <Maximize2 className="w-3.5 h-3.5" />
+              <Maximize2 weight="bold" className="w-3.5 h-3.5" />
             )}
           </button>
           <button
             onClick={() => api.window.close()}
             className="w-8 h-7 rounded-md flex items-center justify-center transition-colors cursor-pointer hover:bg-red-500 hover:text-white"
             style={{ color: "var(--text-secondary)" }}
-            title="Schließen"
+            title={
+              closeToTray
+                ? "In System-Tray schließen (RAM sparen)"
+                : "Schließen"
+            }
           >
-            <X className="w-3.5 h-3.5" />
+            <X weight="bold" className="w-3.5 h-3.5" />
           </button>
         </div>
       </header>

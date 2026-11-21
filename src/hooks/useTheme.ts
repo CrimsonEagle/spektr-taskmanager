@@ -2,7 +2,8 @@ import { useEffect, useState } from "react";
 import { api } from "../lib/tauri";
 import { ResolvedTheme, ThemePreference } from "../types/telemetry";
 
-const STORAGE_KEY = "pulse_theme_pref";
+const STORAGE_KEY = "spektr_theme_pref";
+const LEGACY_STORAGE_KEY = "pulse_theme_pref";
 
 function getSystemTheme(): ResolvedTheme {
   if (typeof window === "undefined") return "dark";
@@ -11,7 +12,8 @@ function getSystemTheme(): ResolvedTheme {
 
 export function useTheme() {
   const [preference, setPreference] = useState<ThemePreference>(() => {
-    const saved = localStorage.getItem(STORAGE_KEY) as ThemePreference | null;
+    const saved = (localStorage.getItem(STORAGE_KEY) ??
+      localStorage.getItem(LEGACY_STORAGE_KEY)) as ThemePreference | null;
     return saved === "light" || saved === "dark" || saved === "system" ? saved : "system";
   });
 

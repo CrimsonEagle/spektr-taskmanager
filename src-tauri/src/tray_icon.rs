@@ -25,14 +25,14 @@ pub fn render_cpu_tray_icon(history: &[u8; 14], current_cpu: f32) -> Vec<u8> {
     const H: usize = 16;
     let mut rgba = vec![0u8; W * H * 4];
 
-    let border: [u8; 4] = [56, 66, 82, 255];
-    let bg: [u8; 4] = [15, 20, 28, 242];
-    let grid: [u8; 4] = [30, 40, 54, 245];
+    let border: [u8; 4] = [71, 85, 105, 255];
+    let bg: [u8; 4] = [15, 20, 32, 246];
+    let grid: [u8; 4] = [30, 41, 59, 245];
 
     let (fill, top_edge): ([u8; 4], [u8; 4]) = match cpu_color_bucket(current_cpu) {
-        2 => ([239, 68, 68, 240], [252, 165, 165, 255]), // Red
-        1 => ([245, 158, 11, 238], [253, 224, 71, 255]), // Amber
-        _ => ([34, 197, 94, 232], [134, 239, 172, 255]), // Green
+        2 => ([251, 113, 133, 242], [254, 205, 211, 255]), // Spektr Coral
+        1 => ([251, 191, 36, 240], [254, 240, 138, 255]),  // Spektr Amber
+        _ => ([56, 189, 248, 236], [186, 230, 253, 255]),  // Spektr Sky Cyan
     };
 
     let set_px = |buf: &mut [u8], x: usize, y: usize, color: [u8; 4]| {

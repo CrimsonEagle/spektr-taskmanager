@@ -2541,20 +2541,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "pulse-taskmanager"
-version = "0.2.0"
-dependencies = [
- "chrono",
- "serde",
- "serde_json",
- "sysinfo",
- "tauri",
- "tauri-build",
- "tauri-plugin-dialog",
- "windows 0.58.0",
-]
-
-[[package]]
 name = "pxfm"
 version = "0.1.30"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3153,6 +3139,22 @@ dependencies = [
  "gobject-sys",
  "libc",
  "system-deps",
+]
+
+[[package]]
+name = "spektr-taskmanager"
+version = "0.2.0"
+dependencies = [
+ "chrono",
+ "serde",
+ "serde_json",
+ "sysinfo",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-dialog",
+ "webview2-com",
+ "windows 0.58.0",
+ "windows-core 0.62.2",
 ]
 
 [[package]]

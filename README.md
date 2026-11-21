@@ -1,10 +1,10 @@
-# Pulse — Modern Windows Task Manager
+# Spektr Taskmanager — Modern Windows Task Manager
 
-**Pulse** is a fast, lightweight, and visually refined Task Manager & system monitor for Windows 10/11 built with **Tauri v2**, **Rust**, **React 19**, **TypeScript**, **Tailwind CSS v4**, and **Framer Motion**.
+**Spektr Taskmanager** is a fast, lightweight, and visually refined Task Manager & system monitor for Windows 10/11 built with **Tauri v2**, **Rust**, **React 19**, **TypeScript**, **Tailwind CSS v4**, **Framer Motion**, and **Phosphor Duotone Icons**.
 
-Designed to deliver power-user insight without visual clutter, Pulse pairs native Windows kernel telemetry with a system-aligned Fluent UI (automatic Light & Dark Mode), semantic color coding, and smooth 60 fps animations — all packed into a ~1.5 MB native Windows installer.
+Designed to deliver power-user insight without visual clutter, Spektr pairs native Windows kernel telemetry with a system-aligned Fluent UI (automatic Light & Dark Mode), semantic spectral color coding, and smooth 60 fps animations — all packed into a ~1.5 MB native Windows installer.
 
-> **Current Version:** `v0.1` *(early development)*
+> **Current Version:** `v0.2.0`
 
 ---
 
@@ -24,7 +24,7 @@ Designed to deliver power-user insight without visual clutter, Pulse pairs nativ
 
 ## Features
 
-### 1. Pulse Overview (Dashboard)
+### 1. Spektr Overview (Dashboard)
 A single-glance system health Bento grid:
 - **CPU Card:** Total usage %, clock speed (GHz), core/thread count, temperature (when exposed), live sparkline, and a real-time **Per-Core Heatmap**.
 - **RAM Card:** Used/total memory, segmented Active vs. Cached/Standby bar, free memory, and Swap/Pagefile usage.
@@ -78,8 +78,8 @@ Accessible right from the sidebar and continuously enforced in the background on
 
 ### 7. Command Palette (`Ctrl + K`), Mini-HUD & System Tray
 - **Command Palette (`Ctrl + K`):** Instantly search processes, look up ports (`:3000`), switch views, toggle themes, apply profiles, or restart Windows Explorer from the keyboard.
-- **Always-on-Top Mini-HUD:** Shrinks Pulse into a compact floating HUD displaying live CPU, RAM, GPU bars, network speeds, and the top CPU consumer.
-- **System Tray:** Quick access menu to show/focus Pulse, toggle Mini-HUD, or exit.
+- **Always-on-Top Mini-HUD:** Shrinks Spektr into a compact floating HUD displaying live CPU, RAM, GPU bars, network speeds, and the top CPU consumer.
+- **System Tray:** Quick access menu to show/focus Spektr, toggle Mini-HUD, or exit.
 
 ---
 
@@ -90,7 +90,7 @@ Accessible right from the sidebar and continuously enforced in the background on
 | **Desktop Shell** | Tauri v2 (WebView2 on Windows, custom frameless title bar, native system tray) |
 | **Backend** | Rust (`sysinfo`, `tokio`, `windows` crate v0.58) |
 | **Native Windows APIs** | `NtQuerySystemInformation`, `GetSystemTimes`, `PDH` (`GPU Engine`), `DXGI`, `GetExtendedTcpTable` / `GetExtendedUdpTable`, `RestartManager` (`RmGetList`), `NtSuspendProcess` / `NtResumeProcess`, `SetProcessInformation` (`ProcessPowerThrottling`), `SCManager`, Win32 Registry, `GetSystemPowerStatus` |
-| **Frontend** | React 19, TypeScript, Vite 6, Tailwind CSS v4, Framer Motion, Lucide Icons |
+| **Frontend** | React 19, TypeScript, Vite 6, Tailwind CSS v4, Framer Motion, Phosphor Icons (Duotone) |
 
 ---
 
@@ -117,6 +117,6 @@ pnpm tauri build
 
 ### Build Outputs
 After running `pnpm tauri build`, you will find:
-- **Windows Setup Installer (recommended):** `src-tauri/target/release/bundle/nsis/Pulse Task Manager_<version>_x64-setup.exe`
+- **Windows Setup Installer (recommended):** `src-tauri/target/release/bundle/nsis/Spektr Taskmanager_<version>_x64-setup.exe`
 - **Windows MSI Installer:** `src-tauri/target/release/bundle/msi/Pulse Task Manager_<version>_x64_en-US.msi`
 - **Standalone Portable Executable:** `src-tauri/target/release/pulse-taskmanager.exe`
