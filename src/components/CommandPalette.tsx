@@ -3,6 +3,7 @@ import { motion } from "framer-motion";
 import {
   ArrowsClockwise as RefreshCw,
   Flame,
+  Globe,
   Leaf,
   MagnifyingGlass as Search,
   Monitor,
@@ -16,10 +17,12 @@ import {
   TreeStructure as ListTree,
   Wrench,
 } from "@phosphor-icons/react";
+import { useI18n } from "../i18n";
 import { formatBytes, getCategoryMeta } from "../lib/format";
 import { api } from "../lib/tauri";
 import {
   ActionResult,
+  LanguagePreference,
   NavTab,
   NetworkConnectionEntry,
   ProcessEntry,
@@ -32,6 +35,7 @@ interface CommandPaletteProps {
   onNavigate: (tab: NavTab) => void;
   onInspectPid: (pid: number) => void;
   onSetTheme: (pref: ThemePreference) => void;
+  onSetLanguage: (pref: LanguagePreference) => void;
   onEnterMiniHud: () => void;
   onApplyProfile: (profile: "normal" | "eco" | "gaming") => void;
   onActionFeedback: (res: ActionResult) => void;
@@ -58,10 +62,12 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
   onNavigate,
   onInspectPid,
   onSetTheme,
+  onSetLanguage,
   onEnterMiniHud,
   onApplyProfile,
   onActionFeedback,
 }) => {
+  const { t, language } = useI18n();
   const [query, setQuery] = useState("");
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [ports, setPorts] = useState<NetworkConnectionEntry[]>([]);
@@ -97,7 +103,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
       for (const p of matchingPorts) {
         out.push({
           id: `port-${p.protocol}-${p.localPort}-${p.pid}`,
-          group: "Offene Ports",
+          group: t("palette.group.ports"),
           title: `Port :${p.localPort} (${p.protocol}) — ${p.processName}`,
           subtitle: `PID ${p.pid}${p.processSubtitle ? ` • ${p.processSubtitle}` : ""}`,
           badge: "Port",
@@ -134,10 +140,10 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
       .slice(0, q ? 8 : 4);
 
     for (const p of matchingProcs) {
-      const cat = getCategoryMeta(p.category);
+      const cat = getCategoryMeta(p.category, language);
       out.push({
         id: `proc-${p.pid}`,
-        group: "Prozesse",
+        group: t("palette.group.processes"),
         title: p.name,
         subtitle: `PID ${p.pid} • ${p.cpuPercent.toFixed(1)}% CPU • ${formatBytes(p.memoryBytes)}${p.subtitle ? ` • ${p.subtitle}` : ""}`,
         badge: cat.label,
@@ -163,8 +169,8 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
     const actions: PaletteItem[] = [
       {
         id: "nav-overview",
-        group: "Ansichten",
-        title: "Übersicht (Spektr Dashboard)",
+        group: t("palette.group.views"),
+        title: t("palette.view.overview"),
         icon: <LayoutDashboard className="w-4 h-4 text-sky-500" />,
         run: () => {
           onNavigate("overview");
@@ -173,8 +179,8 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
       },
       {
         id: "nav-processes",
-        group: "Ansichten",
-        title: "Prozesse verwalten",
+        group: t("palette.group.views"),
+        title: t("palette.view.processes"),
         icon: <ListTree className="w-4 h-4 text-violet-500" />,
         run: () => {
           onNavigate("processes");
@@ -183,8 +189,8 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
       },
       {
         id: "nav-performance",
-        group: "Ansichten",
-        title: "Performance & Spike-Historie",
+        group: t("palette.group.views"),
+        title: t("palette.view.performance"),
         icon: <Activity className="w-4 h-4 text-emerald-500" />,
         run: () => {
           onNavigate("performance");
@@ -193,8 +199,8 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
       },
       {
         id: "nav-network",
-        group: "Ansichten",
-        title: "Netzwerk & Offene Ports",
+        group: t("palette.group.views"),
+        title: t("palette.view.network"),
         icon: <Network className="w-4 h-4 text-rose-500" />,
         run: () => {
           onNavigate("network");
@@ -203,8 +209,8 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
       },
       {
         id: "nav-tools",
-        group: "Ansichten",
-        title: "System & Tools (Autostart, Dienste, File Lock)",
+        group: t("palette.group.views"),
+        title: t("palette.view.tools"),
         icon: <Wrench className="w-4 h-4 text-amber-500" />,
         run: () => {
           onNavigate("tools");
@@ -213,9 +219,9 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
       },
       {
         id: "act-hud",
-        group: "Schnellaktionen",
-        title: "Kompaktes Mini-HUD aktivieren",
-        subtitle: "Always-on-Top schwebende Systemanzeige",
+        group: t("palette.group.actions"),
+        title: t("palette.action.hud"),
+        subtitle: t("palette.action.hudSub"),
         icon: <PictureInPicture2 className="w-4 h-4 text-sky-500" />,
         run: () => {
           onClose();
@@ -224,9 +230,9 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
       },
       {
         id: "act-explorer",
-        group: "Schnellaktionen",
-        title: "Windows Explorer neu starten",
-        subtitle: "Hilft bei hängender Taskleiste oder Desktop",
+        group: t("palette.group.actions"),
+        title: t("palette.action.explorer"),
+        subtitle: t("palette.action.explorerSub"),
         icon: <RefreshCw className="w-4 h-4 text-amber-500" />,
         run: async () => {
           onClose();
@@ -236,9 +242,9 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
       },
       {
         id: "act-eco",
-        group: "Schnellaktionen",
-        title: "Eco-Profil aktivieren",
-        subtitle: "Hintergrundprozesse in Efficiency Mode setzen",
+        group: t("palette.group.actions"),
+        title: t("palette.action.eco"),
+        subtitle: t("palette.action.ecoSub"),
         icon: <Leaf className="w-4 h-4 text-emerald-500" />,
         run: () => {
           onApplyProfile("eco");
@@ -247,9 +253,9 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
       },
       {
         id: "act-gaming",
-        group: "Schnellaktionen",
-        title: "Boost / Gaming-Profil aktivieren",
-        subtitle: "Priorisiert Spiele, drosselt Hintergrundtasks",
+        group: t("palette.group.actions"),
+        title: t("palette.action.gaming"),
+        subtitle: t("palette.action.gamingSub"),
         icon: <Flame className="w-4 h-4 text-orange-500" />,
         run: () => {
           onApplyProfile("gaming");
@@ -258,8 +264,8 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
       },
       {
         id: "theme-system",
-        group: "Design",
-        title: "Design: Systemstandard",
+        group: t("palette.group.theme"),
+        title: t("palette.theme.system"),
         icon: <Monitor className="w-4 h-4" />,
         run: () => {
           onSetTheme("system");
@@ -268,8 +274,8 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
       },
       {
         id: "theme-light",
-        group: "Design",
-        title: "Design: Hell (Light Mode)",
+        group: t("palette.group.theme"),
+        title: t("palette.theme.light"),
         icon: <Sun className="w-4 h-4 text-amber-500" />,
         run: () => {
           onSetTheme("light");
@@ -278,11 +284,41 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
       },
       {
         id: "theme-dark",
-        group: "Design",
-        title: "Design: Dunkel (Dark Mode)",
+        group: t("palette.group.theme"),
+        title: t("palette.theme.dark"),
         icon: <Moon className="w-4 h-4 text-indigo-400" />,
         run: () => {
           onSetTheme("dark");
+          onClose();
+        },
+      },
+      {
+        id: "lang-system",
+        group: t("palette.group.language"),
+        title: t("palette.lang.system"),
+        icon: <Globe className="w-4 h-4 text-sky-500" />,
+        run: () => {
+          onSetLanguage("system");
+          onClose();
+        },
+      },
+      {
+        id: "lang-de",
+        group: t("palette.group.language"),
+        title: t("palette.lang.de"),
+        icon: <Globe className="w-4 h-4 text-sky-500" />,
+        run: () => {
+          onSetLanguage("de");
+          onClose();
+        },
+      },
+      {
+        id: "lang-en",
+        group: t("palette.group.language"),
+        title: t("palette.lang.en"),
+        icon: <Globe className="w-4 h-4 text-sky-500" />,
+        run: () => {
+          onSetLanguage("en");
           onClose();
         },
       },
@@ -307,10 +343,13 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
     onNavigate,
     onInspectPid,
     onSetTheme,
+    onSetLanguage,
     onEnterMiniHud,
     onApplyProfile,
     onActionFeedback,
     onClose,
+    t,
+    language,
   ]);
 
   useEffect(() => {
@@ -370,7 +409,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
                 ref={inputRef}
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder="Prozess suchen, Port eintippen (z. B. :3000) oder Befehl ausführen…"
+                placeholder={t("palette.placeholder")}
                 className="flex-1 bg-transparent outline-none text-sm"
                 style={{ color: "var(--text-primary)" }}
               />
@@ -392,7 +431,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
                   className="py-10 text-center text-sm"
                   style={{ color: "var(--text-muted)" }}
                 >
-                  Keine passenden Prozesse, Ports oder Aktionen gefunden.
+                  {t("palette.empty")}
                 </div>
               ) : (
                 items.map((item, idx) => {
@@ -448,7 +487,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
                                 backgroundColor: "var(--accent-danger-soft)",
                                 color: "var(--accent-danger)",
                               }}
-                              title="Prozess sofort beenden"
+                              title={t("palette.killTooltip")}
                             >
                               <Trash2 className="w-3 h-3" />
                               {item.secondaryAction.label}

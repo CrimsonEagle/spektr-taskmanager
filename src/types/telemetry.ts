@@ -253,6 +253,8 @@ export type NavTab = "overview" | "processes" | "performance" | "network" | "too
 export type PerformanceMetric = "cpu" | "memory" | "gpu" | "disk" | "network";
 export type ThemePreference = "system" | "light" | "dark";
 export type ResolvedTheme = "light" | "dark";
+export type LanguagePreference = "system" | "de" | "en";
+export type ResolvedLanguage = "de" | "en";
 
 export interface ToastMessage {
   id: string;

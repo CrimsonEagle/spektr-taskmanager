@@ -10,7 +10,8 @@ Designed to deliver power-user insight without visual clutter, Spektr pairs nati
 
 ## Design Philosophy
 
-- **System-Aligned Light & Dark Mode:** Follows your Windows appearance setting automatically, with a one-click switcher in the title bar (`System` / `Light` / `Dark`).
+- **System-Aligned Light & Dark Mode:** Follows your Windows appearance setting automatically, with a switcher in Settings & Command Palette (`System` / `Light` / `Dark`).
+- **Bilingual UI (German & English):** Automatic OS language detection with instant live switching (`System` / `Deutsch` / `English`) across the entire interface and Windows System Tray.
 - **Semantic Color Coding:** Each subsystem has a distinct, high-contrast accent color tuned for both light and dark themes:
   - **CPU** — Sky / Cyan
   - **RAM** — Violet

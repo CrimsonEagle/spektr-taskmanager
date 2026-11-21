@@ -12,6 +12,7 @@ import { ToastContainer } from "./components/ToastContainer";
 import { useSettings } from "./hooks/useSettings";
 import { useTelemetry } from "./hooks/useTelemetry";
 import { useTheme } from "./hooks/useTheme";
+import { useI18n } from "./i18n";
 import { api } from "./lib/tauri";
 import {
   ActionResult,
@@ -49,7 +50,10 @@ function isEditableOrControl(
   return false;
 }
 
-function blameToArchivedProcess(bp: BlameProcess): ProcessEntry {
+function blameToArchivedProcess(
+  bp: BlameProcess,
+  exitedStatus: string
+): ProcessEntry {
   return {
     pid: bp.pid,
     parentPid: null,
@@ -66,7 +70,7 @@ function blameToArchivedProcess(bp: BlameProcess): ProcessEntry {
     totalDiskWriteBytes: 0,
     netRxBytesPerSec: bp.netRxBytesPerSec ?? 0,
     netTxBytesPerSec: bp.netTxBytesPerSec ?? 0,
-    status: "Beendet",
+    status: exitedStatus,
     isSuspended: false,
     isEfficiencyMode: false,
     runTimeSeconds: 0,
@@ -80,6 +84,11 @@ function blameToArchivedProcess(bp: BlameProcess): ProcessEntry {
 
 export function App() {
   const { preference, setPreference } = useTheme();
+  const {
+    preference: languagePreference,
+    setPreference: setLanguagePreference,
+    t,
+  } = useI18n();
   const {
     settings,
     setRefreshMs,
@@ -271,27 +280,27 @@ export function App() {
     try {
       await api.restartAsAdmin();
     } catch (err) {
-      pushToast(`Admin-Neustart fehlgeschlagen: ${String(err)}`, "error");
+      pushToast(t("app.adminRestartFailed", { err: String(err) }), "error");
     }
-  }, [pushToast]);
+  }, [pushToast, t]);
 
   const handlePickWindow = useCallback(async () => {
     if (pickingWindow) return;
     setPickingWindow(true);
-    pushToast("Klicke auf ein Fenster — ESC zum Abbrechen", "info");
+    pushToast(t("app.windowPickerHint"), "info");
     try {
       const pid = await api.pickWindowPid();
       if (pid != null && pid > 0) {
         setSelectedPid(pid);
         setSelectedFallback(null);
-        pushToast(`Fenster-Prozess erkannt (PID ${pid}).`, "success");
+        pushToast(t("app.windowPickerFound", { pid }), "success");
       }
     } catch (err) {
-      pushToast(`Fenster-Auswahl fehlgeschlagen: ${String(err)}`, "error");
+      pushToast(t("app.windowPickerFailed", { err: String(err) }), "error");
     } finally {
       setPickingWindow(false);
     }
-  }, [pickingWindow, pushToast]);
+  }, [pickingWindow, pushToast, t]);
 
   const handleCreateRuleForProcess = useCallback((processName: string) => {
     setRuleDraftProcessName(processName);
@@ -435,12 +444,15 @@ export function App() {
     }
     if (selectedFallback && selectedFallback.pid === selectedPid) {
       return {
-        selectedProcess: blameToArchivedProcess(selectedFallback),
+        selectedProcess: blameToArchivedProcess(
+          selectedFallback,
+          t("app.exitedStatus")
+        ),
         selectedIsExited: true,
       };
     }
     return { selectedProcess: null, selectedIsExited: false };
-  }, [selectedPid, snapshot, getExitedProcess, selectedFallback]);
+  }, [selectedPid, snapshot, getExitedProcess, selectedFallback, t]);
 
   if (miniHud) {
     return (
@@ -489,7 +501,7 @@ export function App() {
                 className="text-sm font-medium"
                 style={{ color: "var(--text-secondary)" }}
               >
-                Sammle Live-Systemdaten…
+                {t("app.loading")}
               </div>
             </div>
           ) : (
@@ -585,6 +597,7 @@ export function App() {
             onNavigate={setActiveTab}
             onInspectPid={handleSelectPid}
             onSetTheme={setPreference}
+            onSetLanguage={setLanguagePreference}
             onEnterMiniHud={handleEnterMiniHud}
             onApplyProfile={handleApplyProfile}
             onActionFeedback={handleActionFeedback}
@@ -608,7 +621,9 @@ export function App() {
           <SettingsModal
             settings={settings}
             themePreference={preference}
+            languagePreference={languagePreference}
             onSetTheme={setPreference}
+            onSetLanguage={setLanguagePreference}
             onSetRefreshMs={setRefreshMs}
             onSetCloseToTray={setCloseToTray}
             onSetMinimizeToTrayOnMinimize={setMinimizeToTrayOnMinimize}

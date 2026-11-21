@@ -17,6 +17,7 @@ import {
   WifiHigh as Wifi,
 } from "@phosphor-icons/react";
 import { Sparkline } from "../components/charts/Sparkline";
+import { localizeSpikeReason, useI18n } from "../i18n";
 import {
   formatBytes,
   formatDuration,
@@ -56,6 +57,7 @@ export const OverviewView: React.FC<OverviewViewProps> = React.memo(({
   onJumpToSpike,
   onRestartExplorer,
 }) => {
+  const { t, language } = useI18n();
   const recent = useMemo(() => history.slice(-45), [history]);
   const cpuSeries = useMemo(() => recent.map((h) => h.cpuPercent), [recent]);
   const ramSeries = useMemo(() => recent.map((h) => h.ramPercent), [recent]);
@@ -99,7 +101,7 @@ export const OverviewView: React.FC<OverviewViewProps> = React.memo(({
             <span className="w-6 h-6 rounded-lg bg-red-500/15 text-red-500 flex items-center justify-center shrink-0">
               <AlertTriangle className="w-3.5 h-3.5" />
             </span>
-            <span className="font-semibold">Letzte Lastspitzen erkannt:</span>
+            <span className="font-semibold">{t("overview.spikesDetected")}</span>
             <div className="flex items-center gap-1.5 flex-wrap">
               {recentSpikes.map((sp) => (
                 <button
@@ -111,7 +113,8 @@ export const OverviewView: React.FC<OverviewViewProps> = React.memo(({
                     color: "var(--accent-danger)",
                   }}
                 >
-                  {formatTimeShort(sp.timestampMs)} — {sp.spikeReason}
+                  {formatTimeShort(sp.timestampMs, language)} —{" "}
+                  {localizeSpikeReason(sp.spikeReason, language)}
                 </button>
               ))}
             </div>
@@ -121,7 +124,7 @@ export const OverviewView: React.FC<OverviewViewProps> = React.memo(({
             className="text-xs font-semibold hover:underline cursor-pointer"
             style={{ color: "var(--accent-cpu)" }}
           >
-            Spike-Analyse öffnen →
+            {t("overview.openSpikeAnalysis")}
           </button>
         </motion.div>
       )}
@@ -146,7 +149,7 @@ export const OverviewView: React.FC<OverviewViewProps> = React.memo(({
                 <Cpu className="w-5 h-5" />
               </div>
               <div className="min-w-0">
-                <div className="text-xs font-semibold">Prozessor (CPU)</div>
+                <div className="text-xs font-semibold">{t("overview.cpuTitle")}</div>
                 <div
                   className="text-[11px] truncate"
                   style={{ color: "var(--text-muted)" }}
@@ -168,9 +171,13 @@ export const OverviewView: React.FC<OverviewViewProps> = React.memo(({
                 style={{ color: "var(--text-muted)" }}
                 title={[
                   cpu.baseFrequencyMhz && cpu.baseFrequencyMhz > 0
-                    ? `Basistakt: ${(cpu.baseFrequencyMhz / 1000).toFixed(2)} GHz`
+                    ? t("overview.baseClock", {
+                        ghz: (cpu.baseFrequencyMhz / 1000).toFixed(2),
+                      })
                     : null,
-                  cpu.sensorSource ? `Sensoren: ${cpu.sensorSource}` : null,
+                  cpu.sensorSource
+                    ? t("overview.sensors", { src: cpu.sensorSource })
+                    : null,
                 ]
                   .filter(Boolean)
                   .join(" • ") || undefined}
@@ -206,7 +213,10 @@ export const OverviewView: React.FC<OverviewViewProps> = React.memo(({
           <div>
             <div className="flex items-center justify-between text-[10px] mb-1.5">
               <span style={{ color: "var(--text-muted)" }}>
-                Kern-Heatmap ({cpu.physicalCores}P / {cpu.logicalCores}T)
+                {t("overview.coreHeatmap", {
+                  p: cpu.physicalCores,
+                  t: cpu.logicalCores,
+                })}
               </span>
               <span style={{ color: "var(--text-muted)" }}>0% → 100%</span>
             </div>
@@ -227,7 +237,10 @@ export const OverviewView: React.FC<OverviewViewProps> = React.memo(({
                 return (
                   <div
                     key={idx}
-                    title={`Kern #${idx}: ${val.toFixed(0)}%`}
+                    title={t("overview.coreTooltip", {
+                      idx,
+                      pct: val.toFixed(0),
+                    })}
                     className="h-3.5 rounded-[4px] transition-colors duration-300"
                     style={{ backgroundColor: bg }}
                   />
@@ -255,7 +268,7 @@ export const OverviewView: React.FC<OverviewViewProps> = React.memo(({
                 <MemoryStick className="w-5 h-5" />
               </div>
               <div>
-                <div className="text-xs font-semibold">Arbeitsspeicher (RAM)</div>
+                <div className="text-xs font-semibold">{t("overview.ramTitle")}</div>
                 <div
                   className="text-[11px] tabular-nums"
                   style={{ color: "var(--text-muted)" }}
@@ -275,7 +288,7 @@ export const OverviewView: React.FC<OverviewViewProps> = React.memo(({
                 className="text-[11px] tabular-nums mt-1"
                 style={{ color: "var(--text-muted)" }}
               >
-                Frei: {formatBytes(memory.availableBytes)}
+                {t("overview.free", { val: formatBytes(memory.availableBytes) })}
               </div>
             </div>
           </div>
@@ -295,7 +308,10 @@ export const OverviewView: React.FC<OverviewViewProps> = React.memo(({
             <div
               className="relative h-2.5 w-full rounded-full overflow-hidden"
               style={{ backgroundColor: "var(--bg-subtle)" }}
-              title={`Aktiv: ${formatBytes(memory.usedBytes)} • Standby/Cache: ${formatBytes(memory.cachedBytes)}`}
+              title={t("overview.ramBarTooltip", {
+                active: formatBytes(memory.usedBytes),
+                cached: formatBytes(memory.cachedBytes),
+              })}
             >
               <div
                 className="absolute inset-0 rounded-full origin-left transition-transform duration-500 opacity-40"
@@ -316,7 +332,7 @@ export const OverviewView: React.FC<OverviewViewProps> = React.memo(({
               className="flex items-center justify-between text-[11px] mt-2 tabular-nums"
               style={{ color: "var(--text-muted)" }}
             >
-              <span>Auslagerung (Swap)</span>
+              <span>{t("overview.swap")}</span>
               <span>
                 {formatBytes(memory.swapUsedBytes)} / {formatBytes(memory.swapTotalBytes)}
               </span>
@@ -366,7 +382,7 @@ export const OverviewView: React.FC<OverviewViewProps> = React.memo(({
                 <Gpu className="w-5 h-5" />
               </div>
               <div className="min-w-0">
-                <div className="text-xs font-semibold">Grafikkarte (GPU)</div>
+                <div className="text-xs font-semibold">{t("overview.gpuTitle")}</div>
                 <div
                   className="text-[11px] truncate"
                   style={{ color: "var(--text-muted)" }}
@@ -415,11 +431,13 @@ export const OverviewView: React.FC<OverviewViewProps> = React.memo(({
 
           <div>
             <div className="flex items-center justify-between text-[11px] mb-1.5 tabular-nums">
-              <span style={{ color: "var(--text-muted)" }}>Dedizierter VRAM</span>
+              <span style={{ color: "var(--text-muted)" }}>
+                {t("overview.dedicatedVram")}
+              </span>
               <span>
                 {gpu.vramTotalBytes > 0
                   ? `${formatBytes(gpu.vramUsedBytes)} / ${formatBytes(gpu.vramTotalBytes)}`
-                  : "Geteilter Speicher"}
+                  : t("overview.sharedMemory")}
               </span>
             </div>
             <div
@@ -445,7 +463,8 @@ export const OverviewView: React.FC<OverviewViewProps> = React.memo(({
               </span>
               {(gpu.sharedTotalBytes ?? 0) > 0 && (
                 <span className="truncate">
-                  Geteilt: {formatBytes(gpu.sharedUsedBytes ?? 0)} /{" "}
+                  {t("overview.sharedPrefix")}{" "}
+                  {formatBytes(gpu.sharedUsedBytes ?? 0)} /{" "}
                   {formatBytes(gpu.sharedTotalBytes ?? 0)}
                 </span>
               )}
@@ -471,7 +490,9 @@ export const OverviewView: React.FC<OverviewViewProps> = React.memo(({
                 <HardDrive className="w-5 h-5" />
               </div>
               <div className="min-w-0">
-                <div className="text-xs font-semibold truncate">Datenträger</div>
+                <div className="text-xs font-semibold truncate">
+                  {t("overview.diskTitle")}
+                </div>
                 <div
                   className="text-[11px] tabular-nums truncate"
                   style={{ color: "var(--text-muted)" }}
@@ -491,7 +512,7 @@ export const OverviewView: React.FC<OverviewViewProps> = React.memo(({
               <div
                 className="text-[11px] tabular-nums mt-1"
                 style={{ color: "var(--text-muted)" }}
-                title="Durchschnittliche Antwortzeit"
+                title={t("overview.avgResponseTooltip")}
               >
                 {(disk.avgResponseMs ?? 0).toFixed(1)} ms
               </div>
@@ -527,7 +548,10 @@ export const OverviewView: React.FC<OverviewViewProps> = React.memo(({
                     )}
                   </span>
                   <span className="shrink-0" style={{ color: "var(--text-muted)" }}>
-                    {formatBytes(d.availableBytes)} frei / {formatBytes(d.totalBytes)}
+                    {t("overview.driveFree", {
+                      avail: formatBytes(d.availableBytes),
+                      total: formatBytes(d.totalBytes),
+                    })}
                   </span>
                 </div>
                 <div
@@ -568,7 +592,9 @@ export const OverviewView: React.FC<OverviewViewProps> = React.memo(({
                 <Wifi className="w-5 h-5" />
               </div>
               <div className="min-w-0">
-                <div className="text-xs font-semibold truncate">Netzwerk</div>
+                <div className="text-xs font-semibold truncate">
+                  {t("overview.netTitle")}
+                </div>
                 <div
                   className="text-[11px] truncate"
                   style={{ color: "var(--text-muted)" }}
@@ -642,9 +668,11 @@ export const OverviewView: React.FC<OverviewViewProps> = React.memo(({
               className="hover:underline cursor-pointer"
               style={{ color: "var(--accent-net)" }}
             >
-              Offene Ports: {system.listeningPortsCount} →
+              {t("overview.openPorts", { count: system.listeningPortsCount })}
             </button>
-            <span>Sitzung: ↓ {formatBytes(network.totalRxBytes)}</span>
+            <span>
+              {t("overview.sessionRx", { val: formatBytes(network.totalRxBytes) })}
+            </span>
           </div>
         </motion.div>
 
@@ -661,15 +689,17 @@ export const OverviewView: React.FC<OverviewViewProps> = React.memo(({
               </div>
               <div className="min-w-0">
                 <div className="text-xs font-semibold truncate">
-                  {battery.hasBattery ? "Akku & System" : "System & Schnellzugriff"}
+                  {battery.hasBattery
+                    ? t("overview.batterySystem")
+                    : t("overview.systemShortcuts")}
                 </div>
                 <div
                   className="text-[11px] truncate"
                   style={{ color: "var(--text-muted)" }}
                 >
                   {battery.hasBattery
-                    ? `${battery.percent ?? 0}% • ${battery.isCharging ? "Lädt" : battery.isAcPlugged ? "Netzbetrieb" : "Akkubetrieb"}`
-                    : `${system.processCount} Prozesse • ${formatDuration(system.uptimeSeconds)}`}
+                    ? `${battery.percent ?? 0}% • ${battery.isCharging ? t("overview.charging") : battery.isAcPlugged ? t("overview.acPower") : t("overview.batteryPower")}`
+                    : `${t("overview.processesCount", { count: system.processCount })} • ${formatDuration(system.uptimeSeconds, language)}`}
                 </div>
               </div>
             </div>
@@ -689,7 +719,7 @@ export const OverviewView: React.FC<OverviewViewProps> = React.memo(({
             >
               <span className="flex items-center gap-2">
                 <Network className="w-3.5 h-3.5 text-rose-500" />
-                Offene Ports prüfen
+                {t("overview.checkOpenPorts")}
               </span>
               <span
                 className="text-[11px] font-semibold tabular-nums"
@@ -712,7 +742,7 @@ export const OverviewView: React.FC<OverviewViewProps> = React.memo(({
             >
               <span className="flex items-center gap-2">
                 <FileLock2 className="w-3.5 h-3.5 text-amber-500" />
-                Wer blockiert eine Datei?
+                {t("overview.whoLocksFile")}
               </span>
               <span style={{ color: "var(--text-muted)" }}>→</span>
             </button>
@@ -730,9 +760,11 @@ export const OverviewView: React.FC<OverviewViewProps> = React.memo(({
             >
               <span className="flex items-center gap-2">
                 <RefreshCw className="w-3.5 h-3.5 text-sky-500" />
-                Windows Explorer neu starten
+                {t("overview.restartExplorer")}
               </span>
-              <span style={{ color: "var(--text-muted)" }}>Aktion</span>
+              <span style={{ color: "var(--text-muted)" }}>
+                {t("overview.actionTag")}
+              </span>
             </button>
           </div>
         </motion.div>
@@ -748,14 +780,14 @@ export const OverviewView: React.FC<OverviewViewProps> = React.memo(({
                 className="w-2.5 h-2.5 rounded-full"
                 style={{ backgroundColor: "var(--accent-cpu)" }}
               />
-              Top CPU-Verbraucher
+              {t("overview.topCpu")}
             </h3>
             <button
               onClick={() => onNavigate("processes")}
               className="text-xs font-medium hover:underline cursor-pointer"
               style={{ color: "var(--accent-cpu)" }}
             >
-              Alle Prozesse →
+              {t("overview.allProcesses")}
             </button>
           </div>
           <div className="flex flex-col gap-2">
@@ -818,14 +850,14 @@ export const OverviewView: React.FC<OverviewViewProps> = React.memo(({
                 className="w-2.5 h-2.5 rounded-full"
                 style={{ backgroundColor: "var(--accent-ram)" }}
               />
-              Top RAM-Verbraucher
+              {t("overview.topRam")}
             </h3>
             <button
               onClick={() => onNavigate("processes")}
               className="text-xs font-medium hover:underline cursor-pointer"
               style={{ color: "var(--accent-ram)" }}
             >
-              Alle Prozesse →
+              {t("overview.allProcesses")}
             </button>
           </div>
           <div className="flex flex-col gap-2">

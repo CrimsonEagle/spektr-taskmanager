@@ -25,6 +25,7 @@ import {
   Trash as Trash2,
 } from "@phosphor-icons/react";
 import { Sparkline } from "../components/charts/Sparkline";
+import { useI18n } from "../i18n";
 import {
   getCachedProcessIcon,
   useProcessIcons,
@@ -116,6 +117,7 @@ const ProcessRowItem: React.FC<ProcessRowItemProps> = React.memo(
     onQuickSuspend,
     onQuickKill,
   }) => {
+    const { t } = useI18n();
     const cat = getCategoryMeta(proc.category);
     const diskTotal = proc.diskReadBytesPerSec + proc.diskWriteBytesPerSec;
     const netRx = proc.netRxBytesPerSec ?? 0;
@@ -187,13 +189,13 @@ const ProcessRowItem: React.FC<ProcessRowItemProps> = React.memo(
               {proc.isSuspended && (
                 <Snowflake
                   className="w-3 h-3 text-sky-500 shrink-0"
-                  aria-label="Eingefroren"
+                  aria-label={t("processes.frozen")}
                 />
               )}
               {proc.isEfficiencyMode && (
                 <Leaf
                   className="w-3 h-3 text-emerald-500 shrink-0"
-                  aria-label="Eco-Modus"
+                  aria-label={t("processes.ecoMode")}
                 />
               )}
             </div>
@@ -211,7 +213,10 @@ const ProcessRowItem: React.FC<ProcessRowItemProps> = React.memo(
         {/* CPU + Inline Sparkline */}
         <div
           className="flex items-center justify-end gap-2 tabular-nums"
-          title={`Aktuell: ${proc.cpuPercent.toFixed(1)}% · Ø 30s: ${avg30s.toFixed(1)}%`}
+          title={t("processes.cpuTooltip", {
+            cur: proc.cpuPercent.toFixed(1),
+            avg: avg30s.toFixed(1),
+          })}
         >
           <Sparkline
             data={proc.cpuHistory}
@@ -306,7 +311,7 @@ const ProcessRowItem: React.FC<ProcessRowItemProps> = React.memo(
             onClick={(e) => onQuickSuspend(e, proc)}
             className="w-7 h-7 rounded-lg flex items-center justify-center cursor-pointer hover:bg-[var(--bg-surface-active)]"
             style={{ color: "var(--accent-cpu)" }}
-            title={proc.isSuspended ? "Fortsetzen" : "Einfrieren (Pause)"}
+            title={proc.isSuspended ? t("processes.resume") : t("processes.freeze")}
           >
             {proc.isSuspended ? (
               <Play className="w-3.5 h-3.5" />
@@ -317,7 +322,7 @@ const ProcessRowItem: React.FC<ProcessRowItemProps> = React.memo(
           <button
             onClick={(e) => onQuickKill(e, proc.pid)}
             className="w-7 h-7 rounded-lg flex items-center justify-center cursor-pointer hover:bg-red-500/20 text-red-500"
-            title="Prozess beenden"
+            title={t("processes.kill")}
           >
             <Trash2 className="w-3.5 h-3.5" />
           </button>
@@ -339,6 +344,7 @@ interface GroupRowItemProps {
 
 const GroupRowItem: React.FC<GroupRowItemProps> = React.memo(
   ({ group, expanded, totalMemoryBytes, iconUri, onToggleGroup }) => {
+    const { t } = useI18n();
     const cat = getCategoryMeta(group.category);
     const ramPct =
       totalMemoryBytes > 0 ? (group.memoryBytes / totalMemoryBytes) * 100 : 0;
@@ -463,7 +469,7 @@ const GroupRowItem: React.FC<GroupRowItemProps> = React.memo(
           className="text-right text-[11px]"
           style={{ color: "var(--text-muted)" }}
         >
-          {expanded ? "Zuklappen" : "Details"}
+          {expanded ? t("processes.collapse") : t("processes.details")}
         </div>
       </div>
     );
@@ -485,6 +491,7 @@ export const ProcessesView: React.FC<ProcessesViewProps> = React.memo(
     onRestartAsAdmin,
     onActionFeedback,
   }) => {
+    const { t } = useI18n();
     const [search, setSearch] = useState("");
     const [viewMode, setViewMode] = useState<ViewMode>("grouped");
     const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>("all");
@@ -850,7 +857,7 @@ export const ProcessesView: React.FC<ProcessesViewProps> = React.memo(
       try {
         const path = await api.saveFile(
           `spektr-processes-${tsTag}.csv`,
-          "CSV-Tabelle",
+          t("processes.csvTitle"),
           ["csv"]
         );
         if (!path) return;
@@ -877,12 +884,12 @@ export const ProcessesView: React.FC<ProcessesViewProps> = React.memo(
         await api.exportReport(path, [header, ...rows].join("\n"));
         onActionFeedback({
           ok: true,
-          message: `${filtered.length} Prozesse als CSV exportiert.`,
+          message: t("processes.csvExported", { count: filtered.length }),
         });
       } catch (err) {
         onActionFeedback({
           ok: false,
-          message: `CSV-Export fehlgeschlagen: ${String(err)}`,
+          message: t("processes.csvFailed", { err: String(err) }),
         });
       }
     };
@@ -925,7 +932,7 @@ export const ProcessesView: React.FC<ProcessesViewProps> = React.memo(
               ref={searchInputRef}
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Prozess, PID, Skript oder Pfad filtern… (Strg+F)"
+              placeholder={t("processes.searchPlaceholder")}
               className="bg-transparent outline-none text-xs flex-1"
               style={{ color: "var(--text-primary)" }}
             />
@@ -957,10 +964,10 @@ export const ProcessesView: React.FC<ProcessesViewProps> = React.memo(
                     ? "var(--accent-cpu)"
                     : "var(--text-secondary)",
                 }}
-                title="Fenster-Picker: Klicke auf ein Fenster, um dessen Prozess zu inspizieren"
+                title={t("titlebar.pickerTooltip")}
               >
                 <Crosshair className="w-3.5 h-3.5" />
-                <span className="hidden lg:inline">Picker</span>
+                <span className="hidden lg:inline">{t("processes.picker")}</span>
               </button>
             )}
 
@@ -972,7 +979,7 @@ export const ProcessesView: React.FC<ProcessesViewProps> = React.memo(
                 borderColor: "var(--border-subtle)",
                 color: "var(--text-secondary)",
               }}
-              title="Aktuelle Prozessliste als CSV exportieren"
+              title={t("processes.csvTooltip")}
             >
               <Download className="w-3.5 h-3.5" />
               <span className="hidden md:inline">CSV</span>
@@ -992,7 +999,7 @@ export const ProcessesView: React.FC<ProcessesViewProps> = React.memo(
                   ? "var(--accent-cpu)"
                   : "var(--text-secondary)",
               }}
-              title="Reihenfolge friert beim Hovern automatisch ein – klicken zum dauerhaften Fixieren"
+              title={t("processes.freezeTooltip")}
             >
               {isOrderFrozen ? (
                 <Lock className="w-3.5 h-3.5" />
@@ -1001,10 +1008,10 @@ export const ProcessesView: React.FC<ProcessesViewProps> = React.memo(
               )}
               <span>
                 {manualFreeze
-                  ? "Fixiert"
+                  ? t("processes.pinned")
                   : isHoveringTable
-                    ? "Hover-Pause"
-                    : "Auto-Sort"}
+                    ? t("processes.hoverPause")
+                    : t("processes.autoSort")}
               </span>
             </button>
 
@@ -1018,9 +1025,9 @@ export const ProcessesView: React.FC<ProcessesViewProps> = React.memo(
             >
               {(
                 [
-                  { id: "grouped", label: "Gruppiert", icon: <Layers className="w-3.5 h-3.5" /> },
-                  { id: "tree", label: "Baum", icon: <GitFork className="w-3.5 h-3.5" /> },
-                  { id: "flat", label: "Liste", icon: <List className="w-3.5 h-3.5" /> },
+                  { id: "grouped", label: t("processes.view.grouped"), icon: <Layers className="w-3.5 h-3.5" /> },
+                  { id: "tree", label: t("processes.view.tree"), icon: <GitFork className="w-3.5 h-3.5" /> },
+                  { id: "flat", label: t("processes.view.flat"), icon: <List className="w-3.5 h-3.5" /> },
                 ] as const
               ).map((m) => (
                 <button
@@ -1048,14 +1055,14 @@ export const ProcessesView: React.FC<ProcessesViewProps> = React.memo(
         <div className="flex items-center gap-1.5 flex-wrap">
           {(
             [
-              { id: "all", label: `Alle (${processes.length})`, color: "var(--accent-cpu)" },
-              { id: "high", label: "Hohe Last", color: "#ef4444" },
-              { id: "browser", label: "Browser", color: "#0ea5e9" },
-              { id: "dev", label: "Dev-Tools", color: "#8b5cf6" },
-              { id: "app", label: "Apps", color: "#ec4899" },
-              { id: "game", label: "Games/3D", color: "#10b981" },
-              { id: "background", label: "Hintergrund", color: "#f59e0b" },
-              { id: "system", label: "System", color: "#64748b" },
+              { id: "all", label: t("processes.cat.all", { count: processes.length }), color: "var(--accent-cpu)" },
+              { id: "high", label: t("processes.cat.high"), color: "#ef4444" },
+              { id: "browser", label: t("processes.cat.browser"), color: "#0ea5e9" },
+              { id: "dev", label: t("processes.cat.dev"), color: "#8b5cf6" },
+              { id: "app", label: t("processes.cat.app"), color: "#ec4899" },
+              { id: "game", label: t("processes.cat.game"), color: "#10b981" },
+              { id: "background", label: t("processes.cat.background"), color: "#f59e0b" },
+              { id: "system", label: t("processes.cat.system"), color: "#64748b" },
             ] as const
           ).map((pill) => {
             const active = categoryFilter === pill.id;
@@ -1099,12 +1106,12 @@ export const ProcessesView: React.FC<ProcessesViewProps> = React.memo(
               onClick={() => toggleSort("name")}
               className="text-left cursor-pointer hover:text-[var(--text-primary)]"
             >
-              Prozess / Kontext {renderSortIcon("name")}
+              {t("processes.col.name")} {renderSortIcon("name")}
             </button>
             <button
               onClick={() => toggleSort("cpu")}
               className="text-right cursor-pointer hover:text-[var(--text-primary)]"
-              title="Aktuelle CPU-Auslastung + 30s-Verlauf"
+              title={t("processes.col.cpuTooltip")}
             >
               CPU {renderSortIcon("cpu")}
             </button>
@@ -1124,15 +1131,15 @@ export const ProcessesView: React.FC<ProcessesViewProps> = React.memo(
               onClick={() => toggleSort("disk")}
               className="text-right cursor-pointer hover:text-[var(--text-primary)]"
             >
-              Disk I/O {renderSortIcon("disk")}
+              {t("processes.col.disk")} {renderSortIcon("disk")}
             </button>
             <button
               onClick={() => toggleSort("network")}
               className="text-right cursor-pointer hover:text-[var(--text-primary)] inline-flex items-center justify-end gap-1"
               title={
                 netPerProcessAvailable
-                  ? "Netzwerk-Datendurchsatz pro Prozess (Download + Upload)"
-                  : "Netzwerk-Datendurchsatz pro Prozess erfordert Administratorrechte (Windows ETW)"
+                  ? t("processes.col.networkTooltip")
+                  : t("processes.col.networkAdminTooltip")
               }
             >
               {!netPerProcessAvailable && (
@@ -1141,10 +1148,10 @@ export const ProcessesView: React.FC<ProcessesViewProps> = React.memo(
                   style={{ color: "var(--accent-net)" }}
                 />
               )}
-              <span>Netzwerk</span>
+              <span>{t("processes.col.network")}</span>
               {renderSortIcon("network")}
             </button>
-            <span className="text-right">Aktion</span>
+            <span className="text-right">{t("processes.col.action")}</span>
           </div>
 
           {!netPerProcessAvailable && sortField === "network" && (
@@ -1161,9 +1168,7 @@ export const ProcessesView: React.FC<ProcessesViewProps> = React.memo(
                   className="w-3.5 h-3.5 shrink-0"
                   style={{ color: "var(--accent-net)" }}
                 />
-                <span className="truncate">
-                  Netzwerk-Datendurchsatz pro Prozess erfordert Administratorrechte (Windows Kernel-ETW).
-                </span>
+                <span className="truncate">{t("processes.etwBanner")}</span>
               </span>
               {onRestartAsAdmin && (
                 <button
@@ -1171,7 +1176,7 @@ export const ProcessesView: React.FC<ProcessesViewProps> = React.memo(
                   className="px-2.5 py-1 rounded-lg text-[11px] font-semibold text-white cursor-pointer shrink-0 hover:opacity-90"
                   style={{ backgroundColor: "var(--accent-net)" }}
                 >
-                  Als Admin neu starten
+                  {t("processes.restartAsAdmin")}
                 </button>
               )}
             </div>
@@ -1257,7 +1262,7 @@ export const ProcessesView: React.FC<ProcessesViewProps> = React.memo(
               className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-[var(--bg-surface-hover)] cursor-pointer text-left"
             >
               <Eye className="w-3.5 h-3.5" style={{ color: "var(--accent-cpu)" }} />
-              <span>Inspizieren</span>
+              <span>{t("processes.ctx.inspect")}</span>
             </button>
 
             <button
@@ -1272,7 +1277,10 @@ export const ProcessesView: React.FC<ProcessesViewProps> = React.memo(
                   );
                   onActionFeedback({
                     ok: true,
-                    message: `${p.name} neu gestartet (PID ${newPid}).`,
+                    message: t("processes.ctx.restarted", {
+                      name: p.name,
+                      pid: newPid,
+                    }),
                   });
                   if (newPid > 0) onSelectPid(newPid);
                 });
@@ -1280,7 +1288,7 @@ export const ProcessesView: React.FC<ProcessesViewProps> = React.memo(
               className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-[var(--bg-surface-hover)] cursor-pointer text-left disabled:opacity-40"
             >
               <RotateCw className="w-3.5 h-3.5" />
-              <span>Neu starten</span>
+              <span>{t("processes.ctx.restart")}</span>
             </button>
 
             <button
@@ -1292,8 +1300,11 @@ export const ProcessesView: React.FC<ProcessesViewProps> = React.memo(
                     ok: true,
                     message:
                       freed > 0
-                        ? `RAM von ${p.name} getrimmt (${formatBytes(freed)} freigegeben).`
-                        : `RAM von ${p.name} getrimmt.`,
+                        ? t("processes.ctx.trimmedFreed", {
+                            name: p.name,
+                            freed: formatBytes(freed),
+                          })
+                        : t("processes.ctx.trimmed", { name: p.name }),
                   });
                 });
               }}
@@ -1303,7 +1314,7 @@ export const ProcessesView: React.FC<ProcessesViewProps> = React.memo(
                 className="w-3.5 h-3.5"
                 style={{ color: "var(--accent-ram)" }}
               />
-              <span>RAM trimmen</span>
+              <span>{t("processes.ctx.trimRam")}</span>
             </button>
 
             <button
@@ -1319,12 +1330,12 @@ export const ProcessesView: React.FC<ProcessesViewProps> = React.memo(
               {contextMenu.proc.isSuspended ? (
                 <>
                   <Play className="w-3.5 h-3.5" style={{ color: "var(--accent-cpu)" }} />
-                  <span>Fortsetzen</span>
+                  <span>{t("processes.ctx.resume")}</span>
                 </>
               ) : (
                 <>
                   <Pause className="w-3.5 h-3.5" style={{ color: "var(--accent-cpu)" }} />
-                  <span>Pausieren (Einfrieren)</span>
+                  <span>{t("processes.ctx.suspend")}</span>
                 </>
               )}
             </button>
@@ -1345,8 +1356,8 @@ export const ProcessesView: React.FC<ProcessesViewProps> = React.memo(
               <Leaf className="w-3.5 h-3.5" style={{ color: "var(--accent-gpu)" }} />
               <span>
                 {contextMenu.proc.isEfficiencyMode
-                  ? "Eco-Modus deaktivieren"
-                  : "Eco-Modus aktivieren"}
+                  ? t("processes.ctx.ecoDisable")
+                  : t("processes.ctx.ecoEnable")}
               </span>
             </button>
 
@@ -1362,7 +1373,7 @@ export const ProcessesView: React.FC<ProcessesViewProps> = React.memo(
               className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-[var(--bg-surface-hover)] cursor-pointer text-left disabled:opacity-40"
             >
               <FolderOpen className="w-3.5 h-3.5" />
-              <span>Ordner öffnen</span>
+              <span>{t("processes.ctx.openFolder")}</span>
             </button>
 
             <div
@@ -1382,7 +1393,7 @@ export const ProcessesView: React.FC<ProcessesViewProps> = React.memo(
               style={{ color: "var(--accent-danger)" }}
             >
               <Trash2 className="w-3.5 h-3.5" />
-              <span>Prozess beenden</span>
+              <span>{t("processes.ctx.kill")}</span>
             </button>
 
             <button
@@ -1397,7 +1408,7 @@ export const ProcessesView: React.FC<ProcessesViewProps> = React.memo(
               style={{ color: "var(--accent-danger)" }}
             >
               <Skull className="w-3.5 h-3.5" />
-              <span>Prozessbaum beenden</span>
+              <span>{t("processes.ctx.killTree")}</span>
             </button>
           </div>
         )}

@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { useI18n } from "../../i18n";
 import { formatTimeShort } from "../../lib/format";
 import { HistoryPoint, TimeRange } from "../../types/telemetry";
 
@@ -105,6 +106,7 @@ export const InteractiveAreaChart: React.FC<InteractiveAreaChartProps> =
       onSelectRange,
       onHoverPoint,
     }) => {
+      const { t, language } = useI18n();
       const uid = useId().replace(/:/g, "");
       const svgRef = useRef<SVGSVGElement>(null);
       const cachedRectRef = useRef<{ left: number; width: number } | null>(null);
@@ -383,16 +385,18 @@ export const InteractiveAreaChart: React.FC<InteractiveAreaChartProps> =
               Math.round((p2.timestampMs - p1.timestampMs) / 1000) + 1
             );
             return {
-              text: `${formatTimeShort(p1.timestampMs)} – ${formatTimeShort(p2.timestampMs)}`,
-              sub: `${spanSec}s Bereich`,
-              badge: "Ziehen",
+              text: `${formatTimeShort(p1.timestampMs, language)} – ${formatTimeShort(p2.timestampMs, language)}`,
+              sub: t("chart.rangeSuffix", { sec: spanSec }),
+              badge: t("chart.dragBadge"),
             };
           }
         }
         if (hoverPoint && hoverCoord) {
           return {
             text: `${hoverCoord.val.toFixed(1)} ${unit}`,
-            sub: `um ${formatTimeShort(hoverPoint.timestampMs)}`,
+            sub: t("chart.atTime", {
+              time: formatTimeShort(hoverPoint.timestampMs, language),
+            }),
             badge: null as string | null,
           };
         }
@@ -408,19 +412,21 @@ export const InteractiveAreaChart: React.FC<InteractiveAreaChartProps> =
               const val = coords[selectionBand.startIdx]?.val ?? 0;
               return {
                 text: `${val.toFixed(1)} ${unit}`,
-                sub: `um ${formatTimeShort(p1.timestampMs)}`,
-                badge: "Fixiert",
+                sub: t("chart.atTime", {
+                  time: formatTimeShort(p1.timestampMs, language),
+                }),
+                badge: t("chart.pinnedBadge"),
               };
             }
             return {
-              text: `${formatTimeShort(p1.timestampMs)} – ${formatTimeShort(p2.timestampMs)}`,
+              text: `${formatTimeShort(p1.timestampMs, language)} – ${formatTimeShort(p2.timestampMs, language)}`,
               sub: `${spanSec}s`,
-              badge: "Bereich",
+              badge: t("chart.rangeBadge"),
             };
           }
         }
         return null;
-      }, [selectionBand, hoverPoint, hoverCoord, entries, coords, unit]);
+      }, [selectionBand, hoverPoint, hoverCoord, entries, coords, unit, t, language]);
 
       return (
         <div

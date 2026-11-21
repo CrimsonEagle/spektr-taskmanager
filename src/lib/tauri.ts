@@ -32,6 +32,8 @@ export const api = {
   minimizeWindow: () => invoke<void>("minimize_window"),
   setTrayCpuIcon: (enabled: boolean) =>
     invoke<void>("set_tray_cpu_icon", { enabled }),
+  setLanguage: (lang: "de" | "en") =>
+    invoke<void>("set_language", { lang }),
   setMiniHud: (enabled: boolean, height?: number) =>
     invoke<void>("set_mini_hud", { enabled, height: height ?? null }),
   takePendingMiniHud: () => invoke<boolean>("take_pending_mini_hud"),

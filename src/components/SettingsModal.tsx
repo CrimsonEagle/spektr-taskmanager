@@ -1,19 +1,34 @@
 import React, { useEffect, useState } from "react";
 import { motion } from "framer-motion";
-import { GearSix as Settings, Monitor, Moon, Sun, X } from "@phosphor-icons/react";
+import {
+  GearSix as Settings,
+  Globe,
+  Monitor,
+  Moon,
+  Sun,
+  X,
+} from "@phosphor-icons/react";
 import {
   AppSettings,
   HudMetricsConfig,
   RefreshRateMs,
   TitleBarMetricsConfig,
 } from "../hooks/useSettings";
+import { useI18n } from "../i18n";
 import { api } from "../lib/tauri";
-import { ActionResult, AutostartMode, ThemePreference } from "../types/telemetry";
+import {
+  ActionResult,
+  AutostartMode,
+  LanguagePreference,
+  ThemePreference,
+} from "../types/telemetry";
 
 interface SettingsModalProps {
   settings: AppSettings;
   themePreference: ThemePreference;
+  languagePreference: LanguagePreference;
   onSetTheme: (pref: ThemePreference) => void;
+  onSetLanguage: (pref: LanguagePreference) => void;
   onSetRefreshMs: (ms: RefreshRateMs) => void;
   onSetCloseToTray: (enabled: boolean) => void;
   onSetMinimizeToTrayOnMinimize: (enabled: boolean) => void;
@@ -24,35 +39,11 @@ interface SettingsModalProps {
   onClose: () => void;
 }
 
-const AUTOSTART_MODES: { id: AutostartMode; label: string }[] = [
-  { id: "normal", label: "Normal" },
-  { id: "maximized", label: "Maximiert" },
-  { id: "minimized", label: "Minimiert (Tray)" },
-];
-
 const REFRESH_OPTIONS: { ms: RefreshRateMs; label: string }[] = [
   { ms: 500, label: "0.5s" },
   { ms: 1000, label: "1s" },
   { ms: 2000, label: "2s" },
   { ms: 5000, label: "5s" },
-];
-
-const TITLEBAR_ITEMS: { key: keyof TitleBarMetricsConfig; label: string }[] = [
-  { key: "cpu", label: "CPU" },
-  { key: "ram", label: "RAM" },
-  { key: "gpu", label: "GPU" },
-  { key: "disk", label: "Datenträger" },
-  { key: "network", label: "Netzwerk" },
-];
-
-const HUD_ITEMS: { key: keyof HudMetricsConfig; label: string }[] = [
-  { key: "cpu", label: "CPU (% + GHz)" },
-  { key: "ram", label: "RAM (% + GB)" },
-  { key: "gpu", label: "GPU (% + Temp/VRAM)" },
-  { key: "disk", label: "Datenträger (R/W)" },
-  { key: "network", label: "Netzwerk (↓/↑)" },
-  { key: "topProcess", label: "Top-Prozess" },
-  { key: "battery", label: "Akku (falls vorhanden)" },
 ];
 
 const ToggleSwitch: React.FC<{
@@ -80,7 +71,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = React.memo(
   ({
     settings,
     themePreference,
+    languagePreference,
     onSetTheme,
+    onSetLanguage,
     onSetRefreshMs,
     onSetCloseToTray,
     onSetMinimizeToTrayOnMinimize,
@@ -90,10 +83,36 @@ export const SettingsModal: React.FC<SettingsModalProps> = React.memo(
     onActionFeedback,
     onClose,
   }) => {
+    const { t } = useI18n();
     const [autostartEnabled, setAutostartEnabled] = useState(false);
     const [autostartMode, setAutostartMode] =
       useState<AutostartMode>("minimized");
     const [autostartBusy, setAutostartBusy] = useState(false);
+
+    const autostartModes: { id: AutostartMode; label: string }[] = [
+      { id: "normal", label: t("settings.autostart.mode.normal") },
+      { id: "maximized", label: t("settings.autostart.mode.maximized") },
+      { id: "minimized", label: t("settings.autostart.mode.minimized") },
+    ];
+
+    const titleBarItems: { key: keyof TitleBarMetricsConfig; label: string }[] =
+      [
+        { key: "cpu", label: "CPU" },
+        { key: "ram", label: "RAM" },
+        { key: "gpu", label: "GPU" },
+        { key: "disk", label: t("settings.metric.disk") },
+        { key: "network", label: t("settings.metric.network") },
+      ];
+
+    const hudItems: { key: keyof HudMetricsConfig; label: string }[] = [
+      { key: "cpu", label: t("settings.hud.cpu") },
+      { key: "ram", label: t("settings.hud.ram") },
+      { key: "gpu", label: t("settings.hud.gpu") },
+      { key: "disk", label: t("settings.hud.disk") },
+      { key: "network", label: t("settings.hud.network") },
+      { key: "topProcess", label: t("settings.hud.topProcess") },
+      { key: "battery", label: t("settings.hud.battery") },
+    ];
 
     useEffect(() => {
       let active = true;
@@ -128,20 +147,20 @@ export const SettingsModal: React.FC<SettingsModalProps> = React.memo(
         setAutostartMode(saved.mode);
         const modeLabel =
           saved.mode === "maximized"
-            ? "Maximiert"
+            ? t("settings.autostart.mode.maximized")
             : saved.mode === "minimized"
-              ? "Minimiert im Tray"
-              : "Normal";
+              ? t("settings.autostart.mode.minimizedMsg")
+              : t("settings.autostart.mode.normal");
         onActionFeedback?.({
           ok: true,
           message: saved.enabled
-            ? `Windows-Autostart aktiviert (${modeLabel}).`
-            : "Windows-Autostart deaktiviert.",
+            ? t("settings.autostart.enabledToast", { mode: modeLabel })
+            : t("settings.autostart.disabledToast"),
         });
       } catch (err) {
         onActionFeedback?.({
           ok: false,
-          message: `Autostart konnte nicht geändert werden: ${String(err)}`,
+          message: t("settings.autostart.errorToast", { err: String(err) }),
         });
       } finally {
         setAutostartBusy(false);
@@ -200,7 +219,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = React.memo(
                 className="w-4 h-4"
                 style={{ color: "var(--accent-cpu)" }}
               />
-              <span>Einstellungen</span>
+              <span>{t("settings.title")}</span>
             </div>
             <button
               onClick={onClose}
@@ -219,7 +238,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = React.memo(
                 className="text-[11px] font-semibold uppercase tracking-wider"
                 style={{ color: "var(--text-muted)" }}
               >
-                Allgemein
+                {t("settings.section.general")}
               </h4>
 
               {/* Refresh Rate */}
@@ -231,12 +250,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = React.memo(
                 }}
               >
                 <div>
-                  <div className="font-semibold">Aktualisierungsrate</div>
+                  <div className="font-semibold">{t("settings.refresh.title")}</div>
                   <div
                     className="text-[11px]"
                     style={{ color: "var(--text-muted)" }}
                   >
-                    Intervall für Live-Systemdaten (Leertaste pausiert)
+                    {t("settings.refresh.desc")}
                   </div>
                 </div>
                 <div
@@ -280,13 +299,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = React.memo(
                 <div className="flex items-center justify-between gap-3">
                   <div>
                     <div className="font-semibold">
-                      Mit Windows starten (Autostart)
+                      {t("settings.autostart.title")}
                     </div>
                     <div
                       className="text-[11px]"
                       style={{ color: "var(--text-muted)" }}
                     >
-                      Automatisch bei der Windows-Anmeldung starten
+                      {t("settings.autostart.desc")}
                     </div>
                   </div>
                   <ToggleSwitch
@@ -294,7 +313,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = React.memo(
                     onChange={() =>
                       updateAutostart(!autostartEnabled, autostartMode)
                     }
-                    label="Mit Windows starten (Autostart)"
+                    label={t("settings.autostart.title")}
                   />
                 </div>
 
@@ -308,7 +327,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = React.memo(
                     className="text-[11px] font-medium"
                     style={{ color: "var(--text-secondary)" }}
                   >
-                    Startmodus beim Autostart
+                    {t("settings.autostart.modeLabel")}
                   </span>
                   <div
                     className="flex items-center p-0.5 rounded-lg border gap-0.5 shrink-0"
@@ -317,7 +336,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = React.memo(
                       borderColor: "var(--border-subtle)",
                     }}
                   >
-                    {AUTOSTART_MODES.map((m) => {
+                    {autostartModes.map((m) => {
                       const active = autostartMode === m.id;
                       return (
                         <button
@@ -352,13 +371,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = React.memo(
                 }}
               >
                 <div>
-                  <div className="font-semibold">In System-Tray minimieren</div>
+                  <div className="font-semibold">{t("settings.tray.title")}</div>
                   <div
                     className="text-[11px]"
                     style={{ color: "var(--text-muted)" }}
                   >
-                    Beendet die WebView2-Prozesse zur Speichereinsparung; nur der
-                    schlanke Hintergrunddienst bleibt im Tray aktiv
+                    {t("settings.tray.desc")}
                   </div>
                 </div>
 
@@ -367,18 +385,18 @@ export const SettingsModal: React.FC<SettingsModalProps> = React.memo(
                   style={{ borderColor: "var(--border-subtle)" }}
                 >
                   <div>
-                    <div className="font-medium">Beim Schließen (×)</div>
+                    <div className="font-medium">{t("settings.tray.onClose")}</div>
                     <div
                       className="text-[11px]"
                       style={{ color: "var(--text-muted)" }}
                     >
-                      Fenster schließen parkt Spektr im Tray statt die App zu beenden
+                      {t("settings.tray.onCloseDesc")}
                     </div>
                   </div>
                   <ToggleSwitch
                     checked={settings.closeToTray}
                     onChange={() => onSetCloseToTray(!settings.closeToTray)}
-                    label="Beim Schließen in System-Tray minimieren"
+                    label={t("settings.tray.onCloseAria")}
                   />
                 </div>
 
@@ -387,12 +405,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = React.memo(
                   style={{ borderColor: "var(--border-subtle)" }}
                 >
                   <div>
-                    <div className="font-medium">Beim regulären Minimieren (—)</div>
+                    <div className="font-medium">
+                      {t("settings.tray.onMinimize")}
+                    </div>
                     <div
                       className="text-[11px]"
                       style={{ color: "var(--text-muted)" }}
                     >
-                      Minimieren über Titelleiste oder Taskleiste parkt ebenfalls im Tray
+                      {t("settings.tray.onMinimizeDesc")}
                     </div>
                   </div>
                   <ToggleSwitch
@@ -402,7 +422,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = React.memo(
                         !settings.minimizeToTrayOnMinimize
                       )
                     }
-                    label="Beim regulären Minimieren in System-Tray minimieren"
+                    label={t("settings.tray.onMinimizeAria")}
                   />
                 </div>
               </div>
@@ -417,19 +437,19 @@ export const SettingsModal: React.FC<SettingsModalProps> = React.memo(
               >
                 <div>
                   <div className="font-semibold">
-                    Live-CPU-Chart im Tray-Icon
+                    {t("settings.trayChart.title")}
                   </div>
                   <div
                     className="text-[11px]"
                     style={{ color: "var(--text-muted)" }}
                   >
-                    Zeigt die aktuelle CPU-Auslastung dynamisch im Taskleisten-Symbol
+                    {t("settings.trayChart.desc")}
                   </div>
                 </div>
                 <ToggleSwitch
                   checked={settings.trayCpuIcon}
                   onChange={() => onSetTrayCpuIcon(!settings.trayCpuIcon)}
-                  label="Live-CPU-Chart im Tray-Icon"
+                  label={t("settings.trayChart.title")}
                 />
               </div>
 
@@ -442,12 +462,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = React.memo(
                 }}
               >
                 <div>
-                  <div className="font-semibold">Design</div>
+                  <div className="font-semibold">{t("settings.theme.title")}</div>
                   <div
                     className="text-[11px]"
                     style={{ color: "var(--text-muted)" }}
                   >
-                    Farbschema der Benutzeroberfläche
+                    {t("settings.theme.desc")}
                   </div>
                 </div>
                 <div
@@ -461,26 +481,26 @@ export const SettingsModal: React.FC<SettingsModalProps> = React.memo(
                     [
                       {
                         id: "system",
-                        label: "System",
+                        label: t("settings.theme.system"),
                         icon: <Monitor className="w-3 h-3" />,
                       },
                       {
                         id: "light",
-                        label: "Hell",
+                        label: t("settings.theme.light"),
                         icon: <Sun className="w-3 h-3" />,
                       },
                       {
                         id: "dark",
-                        label: "Dunkel",
+                        label: t("settings.theme.dark"),
                         icon: <Moon className="w-3 h-3" />,
                       },
                     ] as const
-                  ).map((t) => {
-                    const active = themePreference === t.id;
+                  ).map((th) => {
+                    const active = themePreference === th.id;
                     return (
                       <button
-                        key={t.id}
-                        onClick={() => onSetTheme(t.id)}
+                        key={th.id}
+                        onClick={() => onSetTheme(th.id)}
                         className="px-2 py-1 rounded-md text-[11px] font-semibold flex items-center gap-1 cursor-pointer transition-colors"
                         style={{
                           backgroundColor: active
@@ -491,8 +511,67 @@ export const SettingsModal: React.FC<SettingsModalProps> = React.memo(
                             : "var(--text-secondary)",
                         }}
                       >
-                        {t.icon}
-                        <span>{t.label}</span>
+                        {th.icon}
+                        <span>{th.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Language */}
+              <div
+                className="p-3 rounded-xl border flex items-center justify-between gap-3"
+                style={{
+                  backgroundColor: "var(--bg-subtle)",
+                  borderColor: "var(--border-subtle)",
+                }}
+              >
+                <div>
+                  <div className="font-semibold flex items-center gap-1.5">
+                    <Globe
+                      className="w-3.5 h-3.5"
+                      style={{ color: "var(--accent-cpu)" }}
+                    />
+                    <span>{t("settings.language.title")}</span>
+                  </div>
+                  <div
+                    className="text-[11px]"
+                    style={{ color: "var(--text-muted)" }}
+                  >
+                    {t("settings.language.desc")}
+                  </div>
+                </div>
+                <div
+                  className="flex items-center p-0.5 rounded-lg border gap-0.5 shrink-0"
+                  style={{
+                    backgroundColor: "var(--bg-surface-solid)",
+                    borderColor: "var(--border-subtle)",
+                  }}
+                >
+                  {(
+                    [
+                      { id: "system", label: t("settings.language.system") },
+                      { id: "de", label: t("settings.language.de") },
+                      { id: "en", label: t("settings.language.en") },
+                    ] as const
+                  ).map((l) => {
+                    const active = languagePreference === l.id;
+                    return (
+                      <button
+                        key={l.id}
+                        onClick={() => onSetLanguage(l.id)}
+                        className="px-2 py-1 rounded-md text-[11px] font-semibold cursor-pointer transition-colors"
+                        style={{
+                          backgroundColor: active
+                            ? "var(--accent-cpu-soft)"
+                            : "transparent",
+                          color: active
+                            ? "var(--accent-cpu)"
+                            : "var(--text-secondary)",
+                        }}
+                      >
+                        {l.label}
                       </button>
                     );
                   })}
@@ -506,7 +585,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = React.memo(
                 className="text-[11px] font-semibold uppercase tracking-wider"
                 style={{ color: "var(--text-muted)" }}
               >
-                Titelleiste — Live-Metrik-Pills
+                {t("settings.section.titlebar")}
               </h4>
               <div
                 className="p-3 rounded-xl border grid grid-cols-2 gap-2.5"
@@ -515,7 +594,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = React.memo(
                   borderColor: "var(--border-subtle)",
                 }}
               >
-                {TITLEBAR_ITEMS.map((item) => (
+                {titleBarItems.map((item) => (
                   <div
                     key={item.key}
                     className="flex items-center justify-between gap-2"
@@ -524,7 +603,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = React.memo(
                     <ToggleSwitch
                       checked={settings.titleBarMetrics[item.key]}
                       onChange={() => onToggleTitleBarMetric(item.key)}
-                      label={`Titelleiste ${item.label}`}
+                      label={`${t("settings.section.titlebar")} ${item.label}`}
                     />
                   </div>
                 ))}
@@ -537,7 +616,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = React.memo(
                 className="text-[11px] font-semibold uppercase tracking-wider"
                 style={{ color: "var(--text-muted)" }}
               >
-                Mini-HUD — Angezeigte Kacheln
+                {t("settings.section.hud")}
               </h4>
               <div
                 className="p-3 rounded-xl border grid grid-cols-2 gap-2.5"
@@ -546,7 +625,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = React.memo(
                   borderColor: "var(--border-subtle)",
                 }}
               >
-                {HUD_ITEMS.map((item) => (
+                {hudItems.map((item) => (
                   <div
                     key={item.key}
                     className="flex items-center justify-between gap-2"

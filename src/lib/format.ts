@@ -1,4 +1,5 @@
-import { ProcessCategory } from "../types/telemetry";
+import { getCurrentLanguage } from "../i18n";
+import { ProcessCategory, ResolvedLanguage } from "../types/telemetry";
 
 export function formatBytes(bytes: number, decimals = 1): string {
   if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
@@ -24,24 +25,34 @@ export function formatPercent(val: number | null | undefined, digits = 0): strin
   return `${val.toFixed(digits)}%`;
 }
 
-export function formatDuration(seconds: number): string {
+export function formatDuration(
+  seconds: number,
+  lang: ResolvedLanguage = getCurrentLanguage()
+): string {
   if (!Number.isFinite(seconds) || seconds <= 0) return "< 1m";
   const d = Math.floor(seconds / 86400);
   const h = Math.floor((seconds % 86400) / 3600);
   const m = Math.floor((seconds % 3600) / 60);
   const s = Math.floor(seconds % 60);
-  if (d > 0) return `${d}T ${h}h ${m}m`;
+  const dayUnit = lang === "de" ? "T" : "d";
+  if (d > 0) return `${d}${dayUnit} ${h}h ${m}m`;
   if (h > 0) return `${h}h ${m}m`;
   if (m > 0) return `${m}m ${s}s`;
   return `${s}s`;
 }
 
-export function formatTimeShort(timestampMs: number): string {
-  return new Date(timestampMs).toLocaleTimeString("de-DE", {
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  });
+export function formatTimeShort(
+  timestampMs: number,
+  lang: ResolvedLanguage = getCurrentLanguage()
+): string {
+  return new Date(timestampMs).toLocaleTimeString(
+    lang === "de" ? "de-DE" : "en-GB",
+    {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    }
+  );
 }
 
 export function getLoadColor(percent: number): string {
@@ -90,8 +101,15 @@ export const CATEGORY_META: Record<ProcessCategory, CategoryMeta> = {
   },
 };
 
-export function getCategoryMeta(cat: string): CategoryMeta {
-  return CATEGORY_META[cat as ProcessCategory] ?? CATEGORY_META.background;
+export function getCategoryMeta(
+  cat: string,
+  lang: ResolvedLanguage = getCurrentLanguage()
+): CategoryMeta {
+  const base = CATEGORY_META[cat as ProcessCategory] ?? CATEGORY_META.background;
+  if (lang === "en" && (cat === "background" || !(cat in CATEGORY_META))) {
+    return { ...base, label: "Background" };
+  }
+  return base;
 }
 
 export function getProcessMonogram(name: string): string {

@@ -35,6 +35,10 @@ fn default_true() -> bool {
     true
 }
 
+fn default_language() -> String {
+    "de".to_string()
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 struct BackendPrefs {
     #[serde(default = "default_refresh_ms")]
@@ -45,6 +49,8 @@ struct BackendPrefs {
     minimize_to_tray_on_minimize: bool,
     #[serde(default = "default_true")]
     tray_cpu_icon: bool,
+    #[serde(default = "default_language")]
+    language: String,
 }
 
 impl Default for BackendPrefs {
@@ -54,6 +60,7 @@ impl Default for BackendPrefs {
             close_to_tray: false,
             minimize_to_tray_on_minimize: false,
             tray_cpu_icon: true,
+            language: "de".to_string(),
         }
     }
 }
@@ -72,6 +79,11 @@ fn save_backend_prefs(state: &AppState) {
         close_to_tray: state.close_to_tray.load(Ordering::Relaxed),
         minimize_to_tray_on_minimize: state.minimize_to_tray_on_minimize.load(Ordering::Relaxed),
         tray_cpu_icon: state.tray_cpu_icon.load(Ordering::Relaxed),
+        language: state
+            .language
+            .lock()
+            .map(|g| g.clone())
+            .unwrap_or_else(|_| "de".to_string()),
     };
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
@@ -112,6 +124,7 @@ pub struct AppState {
     pub close_to_tray: Arc<AtomicBool>,
     pub minimize_to_tray_on_minimize: Arc<AtomicBool>,
     pub tray_cpu_icon: Arc<AtomicBool>,
+    pub language: Arc<Mutex<String>>,
     pub rule_store: Arc<Mutex<rules::RuleStore>>,
     pub prefs_path: Arc<Mutex<Option<PathBuf>>>,
     pub explicit_exit: Arc<AtomicBool>,
@@ -290,9 +303,18 @@ fn set_refresh_interval(ms: u64, state: State<'_, AppState>) -> ActionResult {
     }
     save_backend_prefs(&state);
     trigger_wake(&state.wake_signal);
+    let is_en = state
+        .language
+        .lock()
+        .map(|g| g.as_str() == "en")
+        .unwrap_or(false);
     ActionResult {
         ok: true,
-        message: format!("Aktualisierungsrate auf {} ms gesetzt.", clamped),
+        message: if is_en {
+            format!("Refresh interval set to {} ms.", clamped)
+        } else {
+            format!("Aktualisierungsrate auf {} ms gesetzt.", clamped)
+        },
     }
 }
 
@@ -368,14 +390,27 @@ fn apply_quick_profile(profile: String, state: State<'_, AppState>) -> ActionRes
         .and_then(|mut guard| guard.as_mut().map(|eng| eng.apply_profile(&profile, procs)))
         .unwrap_or((0, 0));
 
-    let label = match profile.as_str() {
-        "eco" => format!(
+    let is_en = state
+        .language
+        .lock()
+        .map(|g| g.as_str() == "en")
+        .unwrap_or(false);
+
+    let label = match (profile.as_str(), is_en) {
+        ("eco", true) => format!(
+            "Eco profile active ({other_count} throttled) — new background apps are managed automatically."
+        ),
+        ("eco", false) => format!(
             "Eco-Profil aktiv ({other_count} gedrosselt) — neue Hintergrund-Apps werden automatisch verwaltet."
         ),
-        "gaming" => format!(
+        ("gaming", true) => format!(
+            "Boost profile active ({boosted} boosted, {other_count} throttled) — new games & 3D apps are prioritized automatically."
+        ),
+        ("gaming", false) => format!(
             "Boost-Profil aktiv ({boosted} geboostet, {other_count} gedrosselt) — neue Spiele & 3D-Apps werden automatisch priorisiert."
         ),
-        _ => format!("Standard-Profil wiederhergestellt ({other_count} Prozesse zurückgesetzt)."),
+        (_, true) => format!("Default profile restored ({other_count} processes reset)."),
+        (_, false) => format!("Standard-Profil wiederhergestellt ({other_count} Prozesse zurückgesetzt)."),
     };
 
     ActionResult {
@@ -460,6 +495,25 @@ fn minimize_window(app: AppHandle, state: State<'_, AppState>) -> Result<(), Str
         park_to_tray(&app);
     } else if let Some(win) = app.get_webview_window("main") {
         let _ = win.minimize();
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn set_language(app: AppHandle, state: State<'_, AppState>, lang: String) -> Result<(), String> {
+    let normalized = if lang.eq_ignore_ascii_case("en") {
+        "en"
+    } else {
+        "de"
+    };
+    if let Ok(mut guard) = state.language.lock() {
+        *guard = normalized.to_string();
+    }
+    save_backend_prefs(&state);
+    if let Some(tray) = app.tray_by_id("main-tray") {
+        if let Ok(menu) = build_tray_menu(&app, normalized) {
+            let _ = tray.set_menu(Some(menu));
+        }
     }
     Ok(())
 }
@@ -657,19 +711,50 @@ fn control_service(name: String, action: String) -> ActionResult {
     startup_services::control_service(&name, &action)
 }
 
-fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
-    let show_item = MenuItem::with_id(app, "show", "Spektr öffnen", true, None::<&str>)?;
-    let hud_item = MenuItem::with_id(app, "hud", "Mini-HUD umschalten", true, None::<&str>)?;
-    let park_item = MenuItem::with_id(
+fn build_tray_menu(app: &AppHandle, lang: &str) -> tauri::Result<Menu<tauri::Wry>> {
+    let is_en = lang == "en";
+    let show_item = MenuItem::with_id(
         app,
-        "park",
-        "In Tray minimieren (RAM sparen)",
+        "show",
+        if is_en { "Open Spektr" } else { "Spektr öffnen" },
         true,
         None::<&str>,
     )?;
-    let quit_item = MenuItem::with_id(app, "quit", "Beenden", true, None::<&str>)?;
+    let hud_item = MenuItem::with_id(
+        app,
+        "hud",
+        if is_en {
+            "Toggle Mini-HUD"
+        } else {
+            "Mini-HUD umschalten"
+        },
+        true,
+        None::<&str>,
+    )?;
+    let park_item = MenuItem::with_id(
+        app,
+        "park",
+        if is_en {
+            "Minimize to Tray (Save RAM)"
+        } else {
+            "In Tray minimieren (RAM sparen)"
+        },
+        true,
+        None::<&str>,
+    )?;
+    let quit_item = MenuItem::with_id(
+        app,
+        "quit",
+        if is_en { "Quit" } else { "Beenden" },
+        true,
+        None::<&str>,
+    )?;
 
-    let menu = Menu::with_items(app, &[&show_item, &hud_item, &park_item, &quit_item])?;
+    Menu::with_items(app, &[&show_item, &hud_item, &park_item, &quit_item])
+}
+
+fn setup_tray(app: &AppHandle, lang: &str) -> tauri::Result<()> {
+    let menu = build_tray_menu(app, lang)?;
 
     let mut builder = TrayIconBuilder::with_id("main-tray")
         .menu(&menu)
@@ -732,6 +817,7 @@ pub fn run() {
     let close_to_tray = Arc::new(AtomicBool::new(false));
     let minimize_to_tray_on_minimize = Arc::new(AtomicBool::new(false));
     let tray_cpu_icon = Arc::new(AtomicBool::new(true));
+    let language = Arc::new(Mutex::new("de".to_string()));
     let rule_store = Arc::new(Mutex::new(rules::RuleStore::load(None)));
     let prefs_path: Arc<Mutex<Option<PathBuf>>> = Arc::new(Mutex::new(None));
     let explicit_exit = Arc::new(AtomicBool::new(false));
@@ -755,6 +841,7 @@ pub fn run() {
     let setup_close_to_tray = Arc::clone(&close_to_tray);
     let setup_minimize_to_tray_on_minimize = Arc::clone(&minimize_to_tray_on_minimize);
     let setup_tray_cpu_icon = Arc::clone(&tray_cpu_icon);
+    let setup_language = Arc::clone(&language);
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -768,6 +855,7 @@ pub fn run() {
             close_to_tray,
             minimize_to_tray_on_minimize,
             tray_cpu_icon,
+            language,
             rule_store,
             prefs_path,
             explicit_exit,
@@ -851,13 +939,24 @@ pub fn run() {
                     setup_minimize_to_tray_on_minimize
                         .store(prefs.minimize_to_tray_on_minimize, Ordering::Relaxed);
                     setup_tray_cpu_icon.store(prefs.tray_cpu_icon, Ordering::Relaxed);
+                    if let Ok(mut lang_guard) = setup_language.lock() {
+                        *lang_guard = if prefs.language.eq_ignore_ascii_case("en") {
+                            "en".to_string()
+                        } else {
+                            "de".to_string()
+                        };
+                    }
                 }
                 if let Ok(mut p) = setup_prefs_path.lock() {
                     *p = Some(backend_prefs_path);
                 }
             }
 
-            let _ = setup_tray(app.handle());
+            let initial_lang = setup_language
+                .lock()
+                .map(|g| g.clone())
+                .unwrap_or_else(|_| "de".to_string());
+            let _ = setup_tray(app.handle(), &initial_lang);
 
             // Apply requested startup window mode (normal / maximized / minimized to tray).
             // In minimized-to-tray mode we intentionally skip creating any WebView window so
@@ -1067,6 +1166,7 @@ pub fn run() {
             set_telemetry_paused,
             set_tray_behavior,
             minimize_window,
+            set_language,
             set_tray_cpu_icon,
             set_mini_hud,
             take_pending_mini_hud,

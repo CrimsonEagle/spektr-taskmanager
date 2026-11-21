@@ -9,6 +9,7 @@ import {
   WifiHigh as Wifi,
   X,
 } from "@phosphor-icons/react";
+import { useI18n } from "../i18n";
 import {
   formatBytes,
   formatSpeed,
@@ -45,6 +46,7 @@ export const NetworkView: React.FC<NetworkViewProps> = React.memo(({
   onInspectPid,
   onActionFeedback,
 }) => {
+  const { t } = useI18n();
   const [connections, setConnections] = useState<NetworkConnectionEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [filterMode, setFilterMode] = useState<"listening" | "all">("listening");
@@ -156,7 +158,10 @@ export const NetworkView: React.FC<NetworkViewProps> = React.memo(({
       );
       onActionFeedback({
         ok: true,
-        message: `TCP-Verbindung zu ${c.remoteAddr}:${c.remotePort} getrennt.`,
+        message: t("network.disconnected", {
+          addr: c.remoteAddr,
+          port: c.remotePort,
+        }),
       });
       if (killTimerRef.current !== null) {
         window.clearTimeout(killTimerRef.current);
@@ -168,7 +173,7 @@ export const NetworkView: React.FC<NetworkViewProps> = React.memo(({
     } catch (err) {
       onActionFeedback({
         ok: false,
-        message: `Verbindung konnte nicht getrennt werden: ${String(err)}`,
+        message: t("network.disconnectFailed", { err: String(err) }),
       });
     }
   };
@@ -245,8 +250,12 @@ export const NetworkView: React.FC<NetworkViewProps> = React.memo(({
               className="text-[10px] flex justify-between tabular-nums"
               style={{ color: "var(--text-muted)" }}
             >
-              <span>Empfangen: {formatBytes(iface.totalRxBytes)}</span>
-              <span>Gesendet: {formatBytes(iface.totalTxBytes)}</span>
+              <span>
+                {t("network.received", { val: formatBytes(iface.totalRxBytes) })}
+              </span>
+              <span>
+                {t("network.sent", { val: formatBytes(iface.totalTxBytes) })}
+              </span>
             </div>
           </div>
         ))}
@@ -265,7 +274,7 @@ export const NetworkView: React.FC<NetworkViewProps> = React.memo(({
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Port (:3000, :5173), Prozess oder IP suchen…"
+            placeholder={t("network.searchPlaceholder")}
             className="bg-transparent outline-none text-xs flex-1"
             style={{ color: "var(--text-primary)" }}
           />
@@ -293,7 +302,7 @@ export const NetworkView: React.FC<NetworkViewProps> = React.memo(({
                     : "var(--text-muted)",
               }}
             >
-              Offene Ports ({listeningCount})
+              {t("network.filter.listening", { count: listeningCount })}
             </button>
             <button
               onClick={() => setFilterMode("all")}
@@ -307,7 +316,7 @@ export const NetworkView: React.FC<NetworkViewProps> = React.memo(({
                     : "var(--text-muted)",
               }}
             >
-              Alle ({connections.length})
+              {t("network.filter.all", { count: connections.length })}
             </button>
           </div>
 
@@ -319,7 +328,7 @@ export const NetworkView: React.FC<NetworkViewProps> = React.memo(({
               borderColor: "var(--border-subtle)",
               color: "var(--text-secondary)",
             }}
-            title="Aktualisieren"
+            title={t("network.refresh")}
           >
             <RefreshCw className="w-3.5 h-3.5" />
           </button>
@@ -336,12 +345,12 @@ export const NetworkView: React.FC<NetworkViewProps> = React.memo(({
             color: "var(--text-muted)",
           }}
         >
-          <span>Port</span>
-          <span>Protokoll</span>
-          <span>Prozess</span>
-          <span>Adresse</span>
-          <span>Status</span>
-          <span className="text-right">Aktion</span>
+          <span>{t("network.col.port")}</span>
+          <span>{t("network.col.protocol")}</span>
+          <span>{t("network.col.process")}</span>
+          <span>{t("network.col.address")}</span>
+          <span>{t("network.col.status")}</span>
+          <span className="text-right">{t("network.col.action")}</span>
         </div>
 
         <div className="flex-1 overflow-y-auto">
@@ -350,14 +359,14 @@ export const NetworkView: React.FC<NetworkViewProps> = React.memo(({
               className="p-8 text-center text-xs"
               style={{ color: "var(--text-muted)" }}
             >
-              Lade Netzwerk-Ports…
+              {t("network.loading")}
             </div>
           ) : filtered.length === 0 ? (
             <div
               className="p-8 text-center text-xs"
               style={{ color: "var(--text-muted)" }}
             >
-              Keine passenden Ports oder Verbindungen gefunden.
+              {t("network.empty")}
             </div>
           ) : (
             filtered.slice(0, 250).map((c, idx) => {
@@ -449,7 +458,7 @@ export const NetworkView: React.FC<NetworkViewProps> = React.memo(({
                                   backgroundColor: "var(--bg-subtle)",
                                   color: "var(--accent-cpu)",
                                 }}
-                                title="Reverse-DNS (Hostname) auflösen"
+                                title={t("network.dnsTooltip")}
                               >
                                 <Globe className="w-2.5 h-2.5" />
                                 {dnsLoading[c.remoteAddr] ? "…" : "DNS"}
@@ -460,9 +469,9 @@ export const NetworkView: React.FC<NetworkViewProps> = React.memo(({
                           <span
                             className="text-[10px] truncate"
                             style={{ color: "var(--accent-cpu)" }}
-                            title={dnsCache[c.remoteAddr] ?? "Kein Hostname"}
+                            title={dnsCache[c.remoteAddr] ?? t("network.noHostname")}
                           >
-                            {dnsCache[c.remoteAddr] ?? "Kein PTR-Eintrag"}
+                            {dnsCache[c.remoteAddr] ?? t("network.noPtr")}
                           </span>
                         )}
                       </>
@@ -503,10 +512,10 @@ export const NetworkView: React.FC<NetworkViewProps> = React.memo(({
                             backgroundColor: "var(--accent-disk-soft)",
                             color: "var(--accent-disk)",
                           }}
-                          title="TCP-Verbindung trennen (erfordert ggf. Adminrechte)"
+                          title={t("network.disconnectTooltip")}
                         >
                           <X className="w-3 h-3" />
-                          Trennen
+                          {t("network.disconnect")}
                         </button>
                       )}
                     {c.pid > 4 && (
@@ -517,7 +526,10 @@ export const NetworkView: React.FC<NetworkViewProps> = React.memo(({
                           backgroundColor: "var(--accent-danger-soft)",
                           color: "var(--accent-danger)",
                         }}
-                        title={`Prozess ${c.processName} (PID ${c.pid}) beenden`}
+                        title={t("network.killTooltip", {
+                          name: c.processName,
+                          pid: c.pid,
+                        })}
                       >
                         <Trash2 className="w-3 h-3" />
                         Kill

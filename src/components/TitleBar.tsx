@@ -14,6 +14,7 @@ import {
   X,
 } from "@phosphor-icons/react";
 import { TitleBarMetricsConfig } from "../hooks/useSettings";
+import { useI18n } from "../i18n";
 import { formatSpeed } from "../lib/format";
 import { api } from "../lib/tauri";
 import { PerformanceMetric, TelemetrySnapshot } from "../types/telemetry";
@@ -53,6 +54,7 @@ export const TitleBar: React.FC<TitleBarProps> = React.memo(
     onOpenPalette,
     onEnterMiniHud,
   }) => {
+    const { t } = useI18n();
     const [isMaximized, setIsMaximized] = useState(false);
 
     useEffect(() => {
@@ -124,10 +126,10 @@ export const TitleBar: React.FC<TitleBarProps> = React.memo(
                 color: "var(--accent-gpu)",
                 border: "1px solid rgba(16, 185, 129, 0.25)",
               }}
-              title="Läuft mit Administratorrechten"
+              title={t("app.adminActiveTitle")}
             >
               <ShieldCheck className="w-3 h-3" />
-              Admin
+              {t("app.admin")}
             </span>
           )}
           {isElevated === false && (
@@ -139,10 +141,10 @@ export const TitleBar: React.FC<TitleBarProps> = React.memo(
                 borderColor: "var(--border-subtle)",
                 color: "var(--text-secondary)",
               }}
-              title="Als Administrator neu starten"
+              title={t("app.adminRestartTitle")}
             >
               <Shield className="w-3 h-3" />
-              Admin
+              {t("app.admin")}
             </button>
           )}
 
@@ -156,7 +158,7 @@ export const TitleBar: React.FC<TitleBarProps> = React.memo(
                     backgroundColor: "var(--accent-cpu-soft)",
                     color: "var(--accent-cpu)",
                   }}
-                  title="CPU-Details in Performance öffnen"
+                  title={t("titlebar.cpuTooltip")}
                 >
                   <span className="flex items-center gap-1 shrink-0">
                     <span className="w-1.5 h-1.5 rounded-full bg-current shrink-0" />
@@ -176,7 +178,7 @@ export const TitleBar: React.FC<TitleBarProps> = React.memo(
                     backgroundColor: "var(--accent-ram-soft)",
                     color: "var(--accent-ram)",
                   }}
-                  title="RAM-Details in Performance öffnen"
+                  title={t("titlebar.ramTooltip")}
                 >
                   <span className="flex items-center gap-1 shrink-0">
                     <span className="w-1.5 h-1.5 rounded-full bg-current shrink-0" />
@@ -198,7 +200,7 @@ export const TitleBar: React.FC<TitleBarProps> = React.memo(
                       backgroundColor: "var(--accent-gpu-soft)",
                       color: "var(--accent-gpu)",
                     }}
-                    title="GPU-Details in Performance öffnen"
+                    title={t("titlebar.gpuTooltip")}
                   >
                     <span className="flex items-center gap-1 shrink-0">
                       <span className="w-1.5 h-1.5 rounded-full bg-current shrink-0" />
@@ -218,11 +220,11 @@ export const TitleBar: React.FC<TitleBarProps> = React.memo(
                     backgroundColor: "var(--accent-disk-soft)",
                     color: "var(--accent-disk)",
                   }}
-                  title="Datenträger-Details in Performance öffnen"
+                  title={t("titlebar.diskTooltip")}
                 >
                   <span className="flex items-center gap-1 shrink-0">
                     <span className="w-1.5 h-1.5 rounded-full bg-current shrink-0" />
-                    Disk
+                    {t("titlebar.disk")}
                   </span>
                   <span className="text-right whitespace-nowrap">
                     {formatSpeed(
@@ -241,11 +243,11 @@ export const TitleBar: React.FC<TitleBarProps> = React.memo(
                     backgroundColor: "var(--accent-net-soft)",
                     color: "var(--accent-net)",
                   }}
-                  title="Netzwerk-Details in Performance öffnen"
+                  title={t("titlebar.netTooltip")}
                 >
                   <span className="flex items-center gap-1 shrink-0">
                     <span className="w-1.5 h-1.5 rounded-full bg-current shrink-0" />
-                    Netz
+                    {t("titlebar.net")}
                   </span>
                   <span className="text-right whitespace-nowrap">
                     {formatSpeed(
@@ -268,11 +270,11 @@ export const TitleBar: React.FC<TitleBarProps> = React.memo(
             borderColor: "var(--border-subtle)",
             color: "var(--text-secondary)",
           }}
-          title="Befehlspalette öffnen (Strg+K) · Aufgabe ausführen (Strg+R)"
+          title={t("titlebar.paletteTooltip")}
         >
           <Command className="w-3.5 h-3.5 opacity-75 shrink-0" />
           <span className="hidden md:inline truncate">
-            Prozess, Port (:3000) oder Aktion…
+            {t("titlebar.palettePlaceholder")}
           </span>
           <kbd
             className="px-1.5 py-0.5 text-[10px] rounded font-mono font-semibold shrink-0"
@@ -281,7 +283,7 @@ export const TitleBar: React.FC<TitleBarProps> = React.memo(
               border: "1px solid var(--border-subtle)",
             }}
           >
-            Strg+K
+            {t("titlebar.shortcutPalette")}
           </kbd>
         </button>
 
@@ -304,14 +306,14 @@ export const TitleBar: React.FC<TitleBarProps> = React.memo(
             }}
             title={
               telemetryPaused
-                ? "Telemetrie fortsetzen (Leertaste)"
-                : "Telemetrie pausieren (Leertaste)"
+                ? t("titlebar.resumeTooltip")
+                : t("titlebar.pauseTooltip")
             }
           >
             {telemetryPaused ? (
               <>
                 <Play className="w-3 h-3" />
-                <span className="hidden sm:inline">Pausiert</span>
+                <span className="hidden sm:inline">{t("titlebar.paused")}</span>
               </>
             ) : (
               <Pause className="w-3 h-3" />
@@ -330,7 +332,7 @@ export const TitleBar: React.FC<TitleBarProps> = React.memo(
                 ? "var(--accent-cpu)"
                 : "var(--text-secondary)",
             }}
-            title="Fenster-Picker: Klicke auf ein Fenster, um dessen Prozess zu inspizieren"
+            title={t("titlebar.pickerTooltip")}
           >
             <Crosshair className="w-3.5 h-3.5" />
           </button>
@@ -340,7 +342,7 @@ export const TitleBar: React.FC<TitleBarProps> = React.memo(
             onClick={onOpenSettings}
             className="h-7 w-7 rounded-md flex items-center justify-center transition-colors cursor-pointer hover:bg-[var(--bg-surface-hover)]"
             style={{ color: "var(--text-secondary)" }}
-            title="Einstellungen"
+            title={t("titlebar.settings")}
           >
             <Settings className="w-3.5 h-3.5" />
           </button>
@@ -350,7 +352,7 @@ export const TitleBar: React.FC<TitleBarProps> = React.memo(
             onClick={onEnterMiniHud}
             className="h-7 px-2 rounded-md flex items-center gap-1.5 text-xs font-medium transition-colors cursor-pointer hover:bg-[var(--bg-surface-hover)]"
             style={{ color: "var(--text-secondary)" }}
-            title="Kompaktes Always-on-Top Mini-HUD aktivieren"
+            title={t("titlebar.hudTooltip")}
           >
             <PictureInPicture2 className="w-3.5 h-3.5" />
             <span className="hidden xl:inline">HUD</span>
@@ -367,8 +369,8 @@ export const TitleBar: React.FC<TitleBarProps> = React.memo(
             style={{ color: "var(--text-secondary)" }}
             title={
               minimizeToTrayOnMinimize
-                ? "In System-Tray minimieren (RAM sparen)"
-                : "Minimieren"
+                ? t("titlebar.minimizeToTray")
+                : t("titlebar.minimize")
             }
           >
             <Minus weight="bold" className="w-3.5 h-3.5" />
@@ -377,7 +379,7 @@ export const TitleBar: React.FC<TitleBarProps> = React.memo(
             onClick={handleToggleMax}
             className="w-8 h-7 rounded-md flex items-center justify-center transition-colors cursor-pointer hover:bg-[var(--bg-surface-hover)]"
             style={{ color: "var(--text-secondary)" }}
-            title={isMaximized ? "Verkleinern" : "Maximieren"}
+            title={isMaximized ? t("titlebar.restore") : t("titlebar.maximize")}
           >
             {isMaximized ? (
               <Minimize2 weight="bold" className="w-3.5 h-3.5" />
@@ -389,11 +391,7 @@ export const TitleBar: React.FC<TitleBarProps> = React.memo(
             onClick={() => api.window.close()}
             className="w-8 h-7 rounded-md flex items-center justify-center transition-colors cursor-pointer hover:bg-red-500 hover:text-white"
             style={{ color: "var(--text-secondary)" }}
-            title={
-              closeToTray
-                ? "In System-Tray schließen (RAM sparen)"
-                : "Schließen"
-            }
+            title={closeToTray ? t("titlebar.closeToTray") : t("titlebar.close")}
           >
             <X weight="bold" className="w-3.5 h-3.5" />
           </button>

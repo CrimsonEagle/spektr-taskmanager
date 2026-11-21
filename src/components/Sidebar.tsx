@@ -11,6 +11,7 @@ import {
   TreeStructure as ListTree,
   Wrench,
 } from "@phosphor-icons/react";
+import { useI18n } from "../i18n";
 import { formatDuration } from "../lib/format";
 import { APP_VERSION } from "../lib/version";
 import { NavTab, TelemetrySnapshot } from "../types/telemetry";
@@ -37,17 +38,18 @@ export const Sidebar: React.FC<SidebarProps> = React.memo(({
   snapshot,
   onApplyProfile,
 }) => {
+  const { t, language } = useI18n();
   const navItems: NavItemDef[] = [
     {
       id: "overview",
-      label: "Übersicht",
+      label: t("nav.overview"),
       icon: <LayoutDashboard className="w-4 h-4" />,
       accent: "var(--accent-cpu)",
       accentSoft: "var(--accent-cpu-soft)",
     },
     {
       id: "processes",
-      label: "Prozesse",
+      label: t("nav.processes"),
       icon: <ListTree className="w-4 h-4" />,
       accent: "var(--accent-ram)",
       accentSoft: "var(--accent-ram-soft)",
@@ -55,14 +57,14 @@ export const Sidebar: React.FC<SidebarProps> = React.memo(({
     },
     {
       id: "performance",
-      label: "Performance",
+      label: t("nav.performance"),
       icon: <Activity className="w-4 h-4" />,
       accent: "var(--accent-gpu)",
       accentSoft: "var(--accent-gpu-soft)",
     },
     {
       id: "network",
-      label: "Netzwerk & Ports",
+      label: t("nav.network"),
       icon: <Network className="w-4 h-4" />,
       accent: "var(--accent-net)",
       accentSoft: "var(--accent-net-soft)",
@@ -70,7 +72,7 @@ export const Sidebar: React.FC<SidebarProps> = React.memo(({
     },
     {
       id: "tools",
-      label: "System & Tools",
+      label: t("nav.tools"),
       icon: <Wrench className="w-4 h-4" />,
       accent: "var(--accent-disk)",
       accentSoft: "var(--accent-disk-soft)",
@@ -147,7 +149,7 @@ export const Sidebar: React.FC<SidebarProps> = React.memo(({
               className="text-[11px] font-semibold uppercase tracking-wider"
               style={{ color: "var(--text-muted)" }}
             >
-              Schnellprofil
+              {t("sidebar.quickProfile")}
             </span>
             {activeProfile !== "normal" && (
               <span
@@ -158,10 +160,10 @@ export const Sidebar: React.FC<SidebarProps> = React.memo(({
                       ? "var(--accent-gpu)"
                       : "var(--accent-disk)",
                 }}
-                title="Überwacht laufend neu gestartete Prozesse & aktive 3D-Spiele"
+                title={t("sidebar.autoTooltip")}
               >
                 <span className="w-1.5 h-1.5 rounded-full bg-current" />
-                Auto
+                {t("sidebar.auto")}
               </span>
             )}
           </div>
@@ -170,27 +172,24 @@ export const Sidebar: React.FC<SidebarProps> = React.memo(({
               [
                 {
                   id: "normal",
-                  label: "Normal",
+                  label: t("sidebar.profile.normal"),
                   icon: <Gauge className="w-3.5 h-3.5" />,
                   color: "var(--accent-cpu)",
-                  tooltip:
-                    "Standard-Modus: Setzt alle angepassten Prioritäten & den Eco-Modus wieder zurück.",
+                  tooltip: t("sidebar.profile.normalTooltip"),
                 },
                 {
                   id: "eco",
-                  label: "Eco",
+                  label: t("sidebar.profile.eco"),
                   icon: <Leaf className="w-3.5 h-3.5" />,
                   color: "var(--accent-gpu)",
-                  tooltip:
-                    "Eco-Modus (Auto): Aktiviert Windows-11-EcoQoS für Browser & Hintergrund-Apps – auch automatisch für neu gestartete Prozesse.",
+                  tooltip: t("sidebar.profile.ecoTooltip"),
                 },
                 {
                   id: "gaming",
-                  label: "Boost",
+                  label: t("sidebar.profile.boost"),
                   icon: <Flame className="w-3.5 h-3.5" />,
                   color: "var(--accent-disk)",
-                  tooltip:
-                    "Boost-Modus (Auto): Priorisiert Spiele & aktive 3D-Apps (>15% GPU) auf Hoch und drosselt Hintergrundtasks – erkennt auch nachträglich gestartete Spiele automatisch.",
+                  tooltip: t("sidebar.profile.boostTooltip"),
                 },
               ] as const
             ).map((p) => {
@@ -227,19 +226,22 @@ export const Sidebar: React.FC<SidebarProps> = React.memo(({
               }}
             >
               {activeProfile === "gaming" ? (
-                <>
-                  <span>
-                    {snapshot.system.profileBoostedCount} geboostet ·{" "}
-                    {Math.max(
+                <span>
+                  {t("sidebar.profile.boostedSummary", {
+                    boosted: snapshot.system.profileBoostedCount,
+                    throttled: Math.max(
                       0,
                       snapshot.system.profileManagedCount -
                         snapshot.system.profileBoostedCount
-                    )}{" "}
-                    gedrosselt
-                  </span>
-                </>
+                    ),
+                  })}
+                </span>
               ) : (
-                <span>{snapshot.system.profileManagedCount} Prozesse im Eco</span>
+                <span>
+                  {t("sidebar.profile.ecoSummary", {
+                    count: snapshot.system.profileManagedCount,
+                  })}
+                </span>
               )}
             </div>
           )}
@@ -265,7 +267,11 @@ export const Sidebar: React.FC<SidebarProps> = React.memo(({
               className="flex items-center justify-between tabular-nums"
               style={{ color: "var(--text-muted)" }}
             >
-              <span>Laufzeit {formatDuration(snapshot.system.uptimeSeconds)}</span>
+              <span>
+                {t("app.uptime", {
+                  duration: formatDuration(snapshot.system.uptimeSeconds, language),
+                })}
+              </span>
               <span className="font-semibold">v{APP_VERSION}</span>
             </div>
           </div>

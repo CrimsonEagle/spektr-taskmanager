@@ -9,6 +9,7 @@ import {
   X,
 } from "@phosphor-icons/react";
 import { HudMetricsConfig } from "../hooks/useSettings";
+import { useI18n } from "../i18n";
 import { formatBytes, formatSpeed } from "../lib/format";
 import { api } from "../lib/tauri";
 import { TelemetrySnapshot } from "../types/telemetry";
@@ -43,6 +44,7 @@ export function computeMiniHudHeight(
 
 export const MiniHud: React.FC<MiniHudProps> = React.memo(
   ({ snapshot, hudMetrics, onExitMiniHud, onOpenSettings }) => {
+    const { t } = useI18n();
     const hasBattery = snapshot?.battery.hasBattery ?? false;
     const targetHeight = useMemo(
       () => computeMiniHudHeight(hudMetrics, hasBattery),
@@ -83,8 +85,8 @@ export const MiniHud: React.FC<MiniHudProps> = React.memo(
         ? `${snapshot.gpu.temperatureC.toFixed(0)}°C${snapshot.gpu.vramTotalBytes > 0 ? ` · ${formatBytes(snapshot.gpu.vramUsedBytes, 0)}` : ""}`
         : snapshot.gpu.vramTotalBytes > 0
           ? formatBytes(snapshot.gpu.vramUsedBytes, 1)
-          : "Aktiv"
-      : "N/V";
+          : t("hud.active")
+      : t("hud.na");
 
     const topProc = snapshot?.latestPoint.topCpu[0];
 
@@ -132,7 +134,7 @@ export const MiniHud: React.FC<MiniHudProps> = React.memo(
         <div className="flex items-center justify-between shrink-0">
           <div className="flex items-center gap-1.5">
             <SpektrLogo size={20} />
-            <span className="text-xs font-semibold">Spektr HUD</span>
+            <span className="text-xs font-semibold">{t("hud.title")}</span>
           </div>
 
           <div className="flex items-center gap-1">
@@ -140,7 +142,7 @@ export const MiniHud: React.FC<MiniHudProps> = React.memo(
               onClick={onOpenSettings}
               className="w-6 h-6 rounded-md flex items-center justify-center cursor-pointer hover:bg-[var(--bg-surface-hover)]"
               style={{ color: "var(--text-secondary)" }}
-              title="Einstellungen öffnen"
+              title={t("hud.settingsTooltip")}
             >
               <Settings className="w-3.5 h-3.5" />
             </button>
@@ -148,16 +150,16 @@ export const MiniHud: React.FC<MiniHudProps> = React.memo(
               onClick={onExitMiniHud}
               className="px-2 py-1 rounded-md text-[11px] font-medium flex items-center gap-1 cursor-pointer hover:bg-[var(--bg-surface-hover)]"
               style={{ color: "var(--accent-cpu)" }}
-              title="Vollansicht wiederherstellen"
+              title={t("hud.fullscreenTooltip")}
             >
               <Maximize2 className="w-3 h-3" />
-              Vollbild
+              {t("hud.fullscreen")}
             </button>
             <button
               onClick={() => api.window.close()}
               className="w-6 h-6 rounded-md flex items-center justify-center cursor-pointer hover:bg-red-500 hover:text-white"
               style={{ color: "var(--text-secondary)" }}
-              title="Schließen"
+              title={t("hud.close")}
             >
               <X className="w-3.5 h-3.5" />
             </button>
@@ -231,7 +233,7 @@ export const MiniHud: React.FC<MiniHudProps> = React.memo(
                   style={{ color: "var(--accent-disk)" }}
                 >
                   <HardDrive className="w-3 h-3 shrink-0" />
-                  Datenträger
+                  {t("hud.disk")}
                 </span>
                 <span
                   className="truncate"
@@ -255,7 +257,7 @@ export const MiniHud: React.FC<MiniHudProps> = React.memo(
                   className="font-semibold"
                   style={{ color: "var(--accent-net)" }}
                 >
-                  Netzwerk
+                  {t("hud.network")}
                 </span>
                 <div className="flex items-center gap-2 truncate">
                   <span

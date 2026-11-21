@@ -29,6 +29,7 @@ import {
   getCachedProcessIcon,
   useProcessIcons,
 } from "../hooks/useProcessIcons";
+import { localizeSignatureStatus, useI18n } from "../i18n";
 import {
   formatBytes,
   formatDuration,
@@ -79,6 +80,7 @@ export const ProcessInspector: React.FC<ProcessInspectorProps> = React.memo(
     onCreateRule,
     onActionFeedback,
   }) => {
+    const { t, language } = useI18n();
     const [tab, setTab] = useState<InspectorTab>("overview");
     const [ports, setPorts] = useState<NetworkConnectionEntry[]>([]);
     const [priority, setPriority] = useState("normal");
@@ -180,7 +182,7 @@ export const ProcessInspector: React.FC<ProcessInspectorProps> = React.memo(
           if (!active) return;
           onActionFeedback({
             ok: false,
-            message: `Affinität konnte nicht gelesen werden: ${String(err)}`,
+            message: t("inspector.affinityReadError", { err: String(err) }),
           });
           setAffinityOpen(false);
         })
@@ -190,13 +192,13 @@ export const ProcessInspector: React.FC<ProcessInspectorProps> = React.memo(
       return () => {
         active = false;
       };
-    }, [process?.pid, affinityOpen, affinityInfo?.pid, onActionFeedback]);
+    }, [process?.pid, affinityOpen, affinityInfo?.pid, onActionFeedback, t]);
 
     // Strictly On-Demand: load Security info only when "security" tab is selected
     useEffect(() => {
       if (!process || tab !== "security" || securityInfo) return;
       if (!process.exePath) {
-        setSecurityError("Kein Dateipfad für diesen Prozess verfügbar.");
+        setSecurityError(t("inspector.security.noPath"));
         return;
       }
       let active = true;
@@ -313,7 +315,7 @@ export const ProcessInspector: React.FC<ProcessInspectorProps> = React.memo(
           await api.runNewTask(target);
           onActionFeedback({
             ok: true,
-            message: `${process.name} erneut gestartet.`,
+            message: t("inspector.restartedExited", { name: process.name }),
           });
         } else {
           const newPid = await api.restartProcess(
@@ -323,14 +325,17 @@ export const ProcessInspector: React.FC<ProcessInspectorProps> = React.memo(
           );
           onActionFeedback({
             ok: true,
-            message: `${process.name} neu gestartet (neue PID ${newPid}).`,
+            message: t("inspector.restartedNew", {
+              name: process.name,
+              pid: newPid,
+            }),
           });
           if (newPid > 0) onSelectPid(newPid);
         }
       } catch (err) {
         onActionFeedback({
           ok: false,
-          message: `Neustart fehlgeschlagen: ${String(err)}`,
+          message: t("inspector.restartFailed", { err: String(err) }),
         });
       } finally {
         setBusy(false);
@@ -346,13 +351,16 @@ export const ProcessInspector: React.FC<ProcessInspectorProps> = React.memo(
           ok: true,
           message:
             freedBytes > 0
-              ? `RAM von ${process.name} getrimmt (${formatBytes(freedBytes)} freigegeben).`
-              : `RAM von ${process.name} getrimmt.`,
+              ? t("processes.ctx.trimmedFreed", {
+                  name: process.name,
+                  freed: formatBytes(freedBytes),
+                })
+              : t("processes.ctx.trimmed", { name: process.name }),
         });
       } catch (err) {
         onActionFeedback({
           ok: false,
-          message: `RAM-Trimmen fehlgeschlagen: ${String(err)}`,
+          message: t("inspector.trimFailed", { err: String(err) }),
         });
       } finally {
         setBusy(false);
@@ -367,12 +375,12 @@ export const ProcessInspector: React.FC<ProcessInspectorProps> = React.memo(
         setAffinityInfo({ ...affinityInfo, processMask: affinityMask });
         onActionFeedback({
           ok: true,
-          message: `CPU-Affinität für ${process.name} aktualisiert.`,
+          message: t("inspector.affinitySaved", { name: process.name }),
         });
       } catch (err) {
         onActionFeedback({
           ok: false,
-          message: `Affinität konnte nicht gesetzt werden: ${String(err)}`,
+          message: t("inspector.affinitySaveError", { err: String(err) }),
         });
       } finally {
         setBusy(false);
@@ -399,12 +407,12 @@ export const ProcessInspector: React.FC<ProcessInspectorProps> = React.memo(
       navigator.clipboard.writeText(text).then(() => {
         onActionFeedback({
           ok: true,
-          message: `${label} in Zwischenablage kopiert.`,
+          message: t("inspector.copied", { label }),
         });
       });
     };
 
-    const cat = process ? getCategoryMeta(process.category) : null;
+    const cat = process ? getCategoryMeta(process.category, language) : null;
     const cpuAvg30s = useMemo(() => {
       if (!process || process.cpuHistory.length === 0) {
         return process?.cpuPercent ?? 0;
@@ -502,17 +510,17 @@ export const ProcessInspector: React.FC<ProcessInspectorProps> = React.memo(
             >
               {(
                 [
-                  { id: "overview", label: "Übersicht" },
-                  { id: "security", label: "Sicherheit" },
-                  { id: "modules", label: "Module" },
-                  { id: "env", label: "Umgebung" },
+                  { id: "overview", label: t("inspector.tab.overview") },
+                  { id: "security", label: t("inspector.tab.security") },
+                  { id: "modules", label: t("inspector.tab.modules") },
+                  { id: "env", label: t("inspector.tab.env") },
                 ] as const
-              ).map((t) => {
-                const active = tab === t.id;
+              ).map((tabDef) => {
+                const active = tab === tabDef.id;
                 return (
                   <button
-                    key={t.id}
-                    onClick={() => setTab(t.id)}
+                    key={tabDef.id}
+                    onClick={() => setTab(tabDef.id)}
                     className="py-1.5 px-1.5 rounded-lg cursor-pointer transition-colors truncate"
                     style={{
                       backgroundColor: active
@@ -523,7 +531,7 @@ export const ProcessInspector: React.FC<ProcessInspectorProps> = React.memo(
                         : "var(--text-secondary)",
                     }}
                   >
-                    {t.label}
+                    {tabDef.label}
                   </button>
                 );
               })}
@@ -545,19 +553,19 @@ export const ProcessInspector: React.FC<ProcessInspectorProps> = React.memo(
                             color: "var(--accent-disk)",
                           }}
                         >
-                          Beendet (Archiv) — letzte bekannte Daten
+                          {t("inspector.exitedBanner")}
                         </span>
                       )}
                       {process.isSuspended && !isExited && (
                         <span className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-lg bg-sky-500/15 text-sky-500 font-medium">
                           <Snowflake className="w-3.5 h-3.5" />
-                          Prozess eingefroren
+                          {t("inspector.frozenBadge")}
                         </span>
                       )}
                       {process.isEfficiencyMode && !isExited && (
                         <span className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-lg bg-emerald-500/15 text-emerald-500 font-medium">
                           <Leaf className="w-3.5 h-3.5" />
-                          Eco-Modus aktiv
+                          {t("inspector.ecoBadge")}
                         </span>
                       )}
                     </div>
@@ -576,9 +584,13 @@ export const ProcessInspector: React.FC<ProcessInspectorProps> = React.memo(
                         className="text-[11px] font-medium mb-1 flex items-center justify-between gap-1"
                         style={{ color: "var(--text-muted)" }}
                       >
-                        <span>{isExited ? "Letzte CPU-Last" : "CPU-Last (Live)"}</span>
+                        <span>
+                          {isExited
+                            ? t("inspector.lastCpu")
+                            : t("inspector.liveCpu")}
+                        </span>
                         <span className="tabular-nums text-[10px]">
-                          Ø 30s: {cpuAvg30s.toFixed(1)}%
+                          {t("inspector.avg30s", { val: cpuAvg30s.toFixed(1) })}
                         </span>
                       </div>
                       <div className="flex items-end justify-between gap-2">
@@ -609,7 +621,7 @@ export const ProcessInspector: React.FC<ProcessInspectorProps> = React.memo(
                         className="text-[11px] font-medium mb-1"
                         style={{ color: "var(--text-muted)" }}
                       >
-                        Arbeitsspeicher
+                        {t("inspector.memory")}
                       </div>
                       <div
                         className="text-lg font-bold tabular-nums"
@@ -621,7 +633,9 @@ export const ProcessInspector: React.FC<ProcessInspectorProps> = React.memo(
                         className="text-[11px] tabular-nums mt-0.5"
                         style={{ color: "var(--text-muted)" }}
                       >
-                        Laufzeit: {formatDuration(process.runTimeSeconds)}
+                        {t("inspector.runtime", {
+                          val: formatDuration(process.runTimeSeconds, language),
+                        })}
                       </div>
                     </div>
                   </div>
@@ -633,17 +647,17 @@ export const ProcessInspector: React.FC<ProcessInspectorProps> = React.memo(
                         className="text-[11px] font-semibold uppercase tracking-wider"
                         style={{ color: "var(--text-muted)" }}
                       >
-                        Aktionen
+                        {t("inspector.actions")}
                       </span>
                       {onCreateRule && (
                         <button
                           onClick={() => onCreateRule(process.name)}
                           className="text-[11px] font-semibold flex items-center gap-1 hover:underline cursor-pointer"
                           style={{ color: "var(--accent-cpu)" }}
-                          title="Dauerhafte Regel für diesen Prozessnamen anlegen"
+                          title={t("inspector.createRuleTooltip")}
                         >
                           <SlidersHorizontal className="w-3 h-3" />
-                          Regel erstellen
+                          {t("inspector.createRule")}
                         </button>
                       )}
                     </div>
@@ -660,7 +674,7 @@ export const ProcessInspector: React.FC<ProcessInspectorProps> = React.memo(
                         }}
                       >
                         <Trash2 className="w-3.5 h-3.5" />
-                        Beenden
+                        {t("inspector.end")}
                       </button>
                       <button
                         disabled={busy || isExited}
@@ -678,7 +692,7 @@ export const ProcessInspector: React.FC<ProcessInspectorProps> = React.memo(
                         }}
                       >
                         <Skull className="w-3.5 h-3.5" />
-                        Prozessbaum
+                        {t("inspector.processTree")}
                       </button>
 
                       <button
@@ -705,12 +719,12 @@ export const ProcessInspector: React.FC<ProcessInspectorProps> = React.memo(
                         {process.isSuspended ? (
                           <>
                             <Play className="w-3.5 h-3.5" />
-                            Fortsetzen
+                            {t("inspector.resume")}
                           </>
                         ) : (
                           <>
                             <Pause className="w-3.5 h-3.5" />
-                            Einfrieren
+                            {t("inspector.freeze")}
                           </>
                         )}
                       </button>
@@ -737,7 +751,9 @@ export const ProcessInspector: React.FC<ProcessInspectorProps> = React.memo(
                         }}
                       >
                         <Leaf className="w-3.5 h-3.5" />
-                        {process.isEfficiencyMode ? "Eco aus" : "Eco-Modus"}
+                        {process.isEfficiencyMode
+                          ? t("inspector.ecoOff")
+                          : t("inspector.ecoOn")}
                       </button>
 
                       <button
@@ -751,12 +767,14 @@ export const ProcessInspector: React.FC<ProcessInspectorProps> = React.memo(
                         }}
                         title={
                           isExited
-                            ? "Prozess erneut starten"
-                            : "Prozess beenden und mit gleicher Kommandozeile neu starten"
+                            ? t("inspector.restartExitedTooltip")
+                            : t("inspector.restartTooltip")
                         }
                       >
                         <RotateCw className="w-3.5 h-3.5" />
-                        {isExited ? "Erneut starten" : "Neu starten"}
+                        {isExited
+                          ? t("inspector.startAgain")
+                          : t("inspector.restart")}
                       </button>
 
                       <button
@@ -768,10 +786,10 @@ export const ProcessInspector: React.FC<ProcessInspectorProps> = React.memo(
                           borderColor: "var(--border-subtle)",
                           color: "var(--accent-ram)",
                         }}
-                        title="Ungenutzten Arbeitsspeicher (Working Set) freigeben"
+                        title={t("inspector.trimRamTooltip")}
                       >
                         <Minimize2 className="w-3.5 h-3.5" />
-                        RAM trimmen
+                        {t("inspector.trimRam")}
                       </button>
                     </div>
 
@@ -794,18 +812,20 @@ export const ProcessInspector: React.FC<ProcessInspectorProps> = React.memo(
                           color: "var(--text-primary)",
                         }}
                       >
-                        <option value="idle">Priorität: Niedrig (Idle)</option>
+                        <option value="idle">{t("inspector.prio.idle")}</option>
                         <option value="below_normal">
-                          Priorität: Niedriger als Normal
+                          {t("inspector.prio.belowNormal")}
                         </option>
-                        <option value="normal">Priorität: Normal</option>
+                        <option value="normal">
+                          {t("inspector.prio.normal")}
+                        </option>
                         <option value="above_normal">
-                          Priorität: Höher als Normal
+                          {t("inspector.prio.aboveNormal")}
                         </option>
-                        <option value="high">Priorität: Hoch</option>
+                        <option value="high">{t("inspector.prio.high")}</option>
                         {priority === "realtime" && (
                           <option value="realtime" disabled>
-                            Priorität: Echtzeit
+                            {t("inspector.prio.realtime")}
                           </option>
                         )}
                       </select>
@@ -820,10 +840,10 @@ export const ProcessInspector: React.FC<ProcessInspectorProps> = React.memo(
                           backgroundColor: "var(--bg-subtle)",
                           borderColor: "var(--border-subtle)",
                         }}
-                        title="Speicherort im Windows Explorer öffnen"
+                        title={t("inspector.folderTooltip")}
                       >
                         <FolderOpen className="w-3.5 h-3.5" />
-                        Ordner
+                        {t("inspector.folder")}
                       </button>
                     </div>
                   </div>
@@ -846,7 +866,7 @@ export const ProcessInspector: React.FC<ProcessInspectorProps> = React.memo(
                           className="w-3.5 h-3.5"
                           style={{ color: "var(--accent-cpu)" }}
                         />
-                        <span>CPU-Affinität & Kerne</span>
+                        <span>{t("inspector.affinityTitle")}</span>
                       </span>
                       {affinityOpen ? (
                         <ChevronDown className="w-3.5 h-3.5 opacity-70" />
@@ -865,7 +885,7 @@ export const ProcessInspector: React.FC<ProcessInspectorProps> = React.memo(
                             className="text-[11px] text-center py-2"
                             style={{ color: "var(--text-muted)" }}
                           >
-                            Lade CPU-Topologie…
+                            {t("inspector.affinityLoading")}
                           </div>
                         ) : affinityInfo ? (
                           <>
@@ -878,7 +898,7 @@ export const ProcessInspector: React.FC<ProcessInspectorProps> = React.memo(
                                   borderColor: "var(--border-subtle)",
                                 }}
                               >
-                                Alle
+                                {t("inspector.affinityAll")}
                               </button>
                               {affinityInfo.hasHybridCores && (
                                 <>
@@ -891,7 +911,7 @@ export const ProcessInspector: React.FC<ProcessInspectorProps> = React.memo(
                                       color: "var(--accent-cpu)",
                                     }}
                                   >
-                                    Nur P-Cores
+                                    {t("inspector.affinityPCores")}
                                   </button>
                                   <button
                                     onClick={() => selectAffinityPreset("e")}
@@ -902,7 +922,7 @@ export const ProcessInspector: React.FC<ProcessInspectorProps> = React.memo(
                                       color: "var(--accent-gpu)",
                                     }}
                                   >
-                                    Nur E-Cores
+                                    {t("inspector.affinityECores")}
                                   </button>
                                 </>
                               )}
@@ -967,7 +987,7 @@ export const ProcessInspector: React.FC<ProcessInspectorProps> = React.memo(
                               className="w-full py-1.5 rounded-lg text-xs font-semibold text-white cursor-pointer disabled:opacity-40"
                               style={{ backgroundColor: "var(--accent-cpu)" }}
                             >
-                              Affinität anwenden
+                              {t("inspector.affinityApply")}
                             </button>
                           </>
                         ) : null}
@@ -986,7 +1006,7 @@ export const ProcessInspector: React.FC<ProcessInspectorProps> = React.memo(
                   >
                     <div className="flex justify-between">
                       <span style={{ color: "var(--text-muted)" }}>
-                        Datenträger Lesen / Schreiben
+                        {t("inspector.diskRw")}
                       </span>
                       <span className="font-medium tabular-nums">
                         {formatSpeed(process.diskReadBytesPerSec)} /{" "}
@@ -995,7 +1015,7 @@ export const ProcessInspector: React.FC<ProcessInspectorProps> = React.memo(
                     </div>
                     <div className="flex justify-between">
                       <span style={{ color: "var(--text-muted)" }}>
-                        Netzwerk ↓ / ↑
+                        {t("inspector.netRw")}
                       </span>
                       <span
                         className="font-medium tabular-nums"
@@ -1013,7 +1033,7 @@ export const ProcessInspector: React.FC<ProcessInspectorProps> = React.memo(
                     </div>
                     <div className="flex justify-between">
                       <span style={{ color: "var(--text-muted)" }}>
-                        Gesamt-I/O (R / W)
+                        {t("inspector.totalIo")}
                       </span>
                       <span className="font-medium tabular-nums">
                         {formatBytes(process.totalDiskReadBytes)} /{" "}
@@ -1022,7 +1042,7 @@ export const ProcessInspector: React.FC<ProcessInspectorProps> = React.memo(
                     </div>
                     <div className="flex justify-between">
                       <span style={{ color: "var(--text-muted)" }}>
-                        Threads / Offene Handles
+                        {t("inspector.threadsHandles")}
                       </span>
                       <span className="font-medium tabular-nums">
                         {process.threadCount ?? "–"} /{" "}
@@ -1032,7 +1052,7 @@ export const ProcessInspector: React.FC<ProcessInspectorProps> = React.memo(
                     {parentProc && (
                       <div className="flex justify-between items-center">
                         <span style={{ color: "var(--text-muted)" }}>
-                          Elternprozess
+                          {t("inspector.parentProcess")}
                         </span>
                         <button
                           onClick={() => onSelectPid(parentProc.pid)}
@@ -1053,14 +1073,16 @@ export const ProcessInspector: React.FC<ProcessInspectorProps> = React.memo(
                           className="text-[11px] font-semibold uppercase tracking-wider"
                           style={{ color: "var(--text-muted)" }}
                         >
-                          Dateipfad
+                          {t("inspector.filePath")}
                         </span>
                         <button
-                          onClick={() => copyText(process.exePath, "Dateipfad")}
+                          onClick={() =>
+                            copyText(process.exePath, t("inspector.filePath"))
+                          }
                           className="text-[11px] flex items-center gap-1 hover:underline cursor-pointer"
                           style={{ color: "var(--accent-cpu)" }}
                         >
-                          <Copy className="w-3 h-3" /> Kopieren
+                          <Copy className="w-3 h-3" /> {t("inspector.copy")}
                         </button>
                       </div>
                       <div
@@ -1083,16 +1105,17 @@ export const ProcessInspector: React.FC<ProcessInspectorProps> = React.memo(
                           className="text-[11px] font-semibold uppercase tracking-wider flex items-center gap-1"
                           style={{ color: "var(--text-muted)" }}
                         >
-                          <Terminal className="w-3 h-3" /> Kommandozeile
+                          <Terminal className="w-3 h-3" />{" "}
+                          {t("inspector.cmdLine")}
                         </span>
                         <button
                           onClick={() =>
-                            copyText(process.cmdLine, "Kommandozeile")
+                            copyText(process.cmdLine, t("inspector.cmdLine"))
                           }
                           className="text-[11px] flex items-center gap-1 hover:underline cursor-pointer"
                           style={{ color: "var(--accent-cpu)" }}
                         >
-                          <Copy className="w-3 h-3" /> Kopieren
+                          <Copy className="w-3 h-3" /> {t("inspector.copy")}
                         </button>
                       </div>
                       <div
@@ -1115,8 +1138,8 @@ export const ProcessInspector: React.FC<ProcessInspectorProps> = React.memo(
                         className="text-[11px] font-semibold uppercase tracking-wider flex items-center gap-1.5"
                         style={{ color: "var(--text-muted)" }}
                       >
-                        <Network className="w-3 h-3" /> Netzwerk & Ports (
-                        {ports.length})
+                        <Network className="w-3 h-3" />{" "}
+                        {t("inspector.portsCount", { count: ports.length })}
                       </span>
                       <div className="flex flex-col gap-1">
                         {ports.slice(0, 8).map((c, idx) => (
@@ -1159,8 +1182,10 @@ export const ProcessInspector: React.FC<ProcessInspectorProps> = React.memo(
                         className="text-[11px] font-semibold uppercase tracking-wider flex items-center gap-1.5"
                         style={{ color: "var(--text-muted)" }}
                       >
-                        <GitBranch className="w-3 h-3" /> Kindprozesse (
-                        {children.length})
+                        <GitBranch className="w-3 h-3" />{" "}
+                        {t("inspector.childrenCount", {
+                          count: children.length,
+                        })}
                       </span>
                       <div className="flex flex-col gap-1">
                         {children.slice(0, 10).map((ch) => (
@@ -1201,7 +1226,7 @@ export const ProcessInspector: React.FC<ProcessInspectorProps> = React.memo(
                       className="p-6 text-center text-xs"
                       style={{ color: "var(--text-muted)" }}
                     >
-                      Prüfe digitale Signatur & SHA-256…
+                      {t("inspector.security.loading")}
                     </div>
                   ) : securityError ? (
                     <div
@@ -1235,7 +1260,12 @@ export const ProcessInspector: React.FC<ProcessInspectorProps> = React.memo(
                         ) : (
                           <ShieldAlert className="w-4 h-4 shrink-0" />
                         )}
-                        <span>{securityInfo.signatureStatus}</span>
+                        <span>
+                          {localizeSignatureStatus(
+                            securityInfo.signatureStatus,
+                            language
+                          )}
+                        </span>
                       </div>
 
                       <div
@@ -1247,15 +1277,16 @@ export const ProcessInspector: React.FC<ProcessInspectorProps> = React.memo(
                       >
                         <div className="flex justify-between gap-2">
                           <span style={{ color: "var(--text-muted)" }}>
-                            Herausgeber
+                            {t("inspector.security.publisher")}
                           </span>
                           <span className="font-medium text-right truncate">
-                            {securityInfo.companyName || "Unbekannt"}
+                            {securityInfo.companyName ||
+                              t("inspector.security.unknown")}
                           </span>
                         </div>
                         <div className="flex justify-between gap-2">
                           <span style={{ color: "var(--text-muted)" }}>
-                            Beschreibung
+                            {t("inspector.security.description")}
                           </span>
                           <span className="font-medium text-right truncate">
                             {securityInfo.fileDescription || "–"}
@@ -1263,7 +1294,7 @@ export const ProcessInspector: React.FC<ProcessInspectorProps> = React.memo(
                         </div>
                         <div className="flex justify-between gap-2">
                           <span style={{ color: "var(--text-muted)" }}>
-                            Dateiversion
+                            {t("inspector.security.version")}
                           </span>
                           <span className="font-mono text-[11px]">
                             {securityInfo.fileVersion || "–"}
@@ -1271,7 +1302,7 @@ export const ProcessInspector: React.FC<ProcessInspectorProps> = React.memo(
                         </div>
                         <div className="flex justify-between gap-2">
                           <span style={{ color: "var(--text-muted)" }}>
-                            Dateigröße
+                            {t("inspector.security.fileSize")}
                           </span>
                           <span className="font-medium tabular-nums">
                             {formatBytes(securityInfo.fileSize)}
@@ -1294,7 +1325,7 @@ export const ProcessInspector: React.FC<ProcessInspectorProps> = React.memo(
                             className="text-[11px] flex items-center gap-1 hover:underline cursor-pointer"
                             style={{ color: "var(--accent-cpu)" }}
                           >
-                            <Copy className="w-3 h-3" /> Kopieren
+                            <Copy className="w-3 h-3" /> {t("inspector.copy")}
                           </button>
                         </div>
                         <div
@@ -1316,7 +1347,9 @@ export const ProcessInspector: React.FC<ProcessInspectorProps> = React.memo(
                           } catch (err) {
                             onActionFeedback({
                               ok: false,
-                              message: `Browser konnte nicht geöffnet werden: ${String(err)}`,
+                              message: t("inspector.security.browserError", {
+                                err: String(err),
+                              }),
                             });
                           }
                         }}
@@ -1328,7 +1361,7 @@ export const ProcessInspector: React.FC<ProcessInspectorProps> = React.memo(
                         }}
                       >
                         <ExternalLink className="w-3.5 h-3.5" />
-                        Auf VirusTotal prüfen
+                        {t("inspector.security.checkVt")}
                       </button>
                     </>
                   ) : null}
@@ -1347,15 +1380,14 @@ export const ProcessInspector: React.FC<ProcessInspectorProps> = React.memo(
                         color: "var(--text-muted)",
                       }}
                     >
-                      Module &amp; Threads sind für bereits beendete Prozesse
-                      (Archiv-Modus) nicht mehr verfügbar.
+                      {t("inspector.modules.exited")}
                     </div>
                   ) : modulesLoading ? (
                     <div
                       className="p-6 text-center text-xs"
                       style={{ color: "var(--text-muted)" }}
                     >
-                      Lade Module & Threads…
+                      {t("inspector.modules.loading")}
                     </div>
                   ) : modulesError ? (
                     <div
@@ -1384,7 +1416,7 @@ export const ProcessInspector: React.FC<ProcessInspectorProps> = React.memo(
                         <input
                           value={moduleFilter}
                           onChange={(e) => setModuleFilter(e.target.value)}
-                          placeholder="DLL oder Pfad filtern…"
+                          placeholder={t("inspector.modules.filterPlaceholder")}
                           className="bg-transparent outline-none text-xs flex-1"
                           style={{ color: "var(--text-primary)" }}
                         />
@@ -1395,8 +1427,11 @@ export const ProcessInspector: React.FC<ProcessInspectorProps> = React.memo(
                           className="text-[11px] font-semibold uppercase tracking-wider flex items-center gap-1.5"
                           style={{ color: "var(--text-muted)" }}
                         >
-                          <Layers className="w-3 h-3" /> Geladene Module (
-                          {filteredModules.length} / {modulesInfo.totalModules})
+                          <Layers className="w-3 h-3" />{" "}
+                          {t("inspector.modules.loaded", {
+                            shown: filteredModules.length,
+                            total: modulesInfo.totalModules,
+                          })}
                         </span>
                         <div className="flex flex-col gap-1 max-h-64 overflow-y-auto">
                           {filteredModules.map((m, idx) => (
@@ -1478,15 +1513,14 @@ export const ProcessInspector: React.FC<ProcessInspectorProps> = React.memo(
                         color: "var(--text-muted)",
                       }}
                     >
-                      Umgebungsvariablen sind für bereits beendete Prozesse
-                      (Archiv-Modus) nicht mehr verfügbar.
+                      {t("inspector.env.exited")}
                     </div>
                   ) : envLoading ? (
                     <div
                       className="p-6 text-center text-xs"
                       style={{ color: "var(--text-muted)" }}
                     >
-                      Lese Arbeitsverzeichnis & Umgebungsvariablen…
+                      {t("inspector.env.loading")}
                     </div>
                   ) : envError ? (
                     <div
@@ -1508,16 +1542,19 @@ export const ProcessInspector: React.FC<ProcessInspectorProps> = React.memo(
                               className="text-[11px] font-semibold uppercase tracking-wider"
                               style={{ color: "var(--text-muted)" }}
                             >
-                              Arbeitsverzeichnis (CWD)
+                              {t("inspector.env.cwd")}
                             </span>
                             <button
                               onClick={() =>
-                                copyText(envInfo.cwd!, "Arbeitsverzeichnis")
+                                copyText(
+                                  envInfo.cwd!,
+                                  t("inspector.env.cwdCopyLabel")
+                                )
                               }
                               className="text-[11px] flex items-center gap-1 hover:underline cursor-pointer"
                               style={{ color: "var(--accent-cpu)" }}
                             >
-                              <Copy className="w-3 h-3" /> Kopieren
+                              <Copy className="w-3 h-3" /> {t("inspector.copy")}
                             </button>
                           </div>
                           <div
@@ -1547,7 +1584,7 @@ export const ProcessInspector: React.FC<ProcessInspectorProps> = React.memo(
                         <input
                           value={envFilter}
                           onChange={(e) => setEnvFilter(e.target.value)}
-                          placeholder="Variable oder Wert filtern…"
+                          placeholder={t("inspector.env.filterPlaceholder")}
                           className="bg-transparent outline-none text-xs flex-1"
                           style={{ color: "var(--text-primary)" }}
                         />
@@ -1582,8 +1619,7 @@ export const ProcessInspector: React.FC<ProcessInspectorProps> = React.memo(
                             className="text-[10px] text-center py-1"
                             style={{ color: "var(--text-muted)" }}
                           >
-                            Umgebungsvariablen wurden aus Performance-Gründen
-                            gekürzt.
+                            {t("inspector.env.truncated")}
                           </div>
                         )}
                       </div>

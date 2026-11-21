@@ -19,6 +19,7 @@ import {
 } from "@phosphor-icons/react";
 import { InteractiveAreaChart } from "../components/charts/InteractiveAreaChart";
 import { Sparkline } from "../components/charts/Sparkline";
+import { localizeSpikeReason, TranslationKey, useI18n } from "../i18n";
 import {
   formatBytes,
   formatSpeed,
@@ -119,59 +120,62 @@ const DISK_ACTIVE_SELECTOR = (p: HistoryPoint) => p.diskActivePercent ?? 0;
 const METRIC_STATIC_META: Record<
   MetricKey,
   {
-    label: string;
+    labelKey?: TranslationKey;
+    labelFallback: string;
     color: string;
     unit: string;
     max: number | undefined;
-    listTitleSingle: string;
-    listTitleRange: string;
-    emptyText: string;
+    listTitleSingleKey: TranslationKey;
+    listTitleRangeKey: TranslationKey;
+    emptyTextKey: TranslationKey;
   }
 > = {
   cpu: {
-    label: "CPU",
+    labelFallback: "CPU",
     color: "var(--accent-cpu)",
     unit: "%",
     max: 100,
-    listTitleSingle: "Top CPU-Prozesse",
-    listTitleRange: "Top CPU-Prozesse (Zeitraum)",
-    emptyText: "Keine messbare CPU-Aktivität in diesem Zeitraum.",
+    listTitleSingleKey: "perf.list.cpu",
+    listTitleRangeKey: "perf.list.cpuRange",
+    emptyTextKey: "perf.list.cpuEmpty",
   },
   ram: {
-    label: "RAM",
+    labelFallback: "RAM",
     color: "var(--accent-ram)",
     unit: "%",
     max: 100,
-    listTitleSingle: "Top RAM-Prozesse",
-    listTitleRange: "Top RAM-Prozesse (Zeitraum)",
-    emptyText: "Keine RAM-Prozessdaten verfügbar.",
+    listTitleSingleKey: "perf.list.ram",
+    listTitleRangeKey: "perf.list.ramRange",
+    emptyTextKey: "perf.list.ramEmpty",
   },
   gpu: {
-    label: "GPU",
+    labelFallback: "GPU",
     color: "var(--accent-gpu)",
     unit: "%",
     max: 100,
-    listTitleSingle: "Top GPU-Prozesse",
-    listTitleRange: "Top GPU-Prozesse (Zeitraum)",
-    emptyText: "Keine aktive GPU-Engine-Auslastung gemessen.",
+    listTitleSingleKey: "perf.list.gpu",
+    listTitleRangeKey: "perf.list.gpuRange",
+    emptyTextKey: "perf.list.gpuEmpty",
   },
   disk: {
-    label: "Disk I/O",
+    labelKey: "perf.metric.diskIo",
+    labelFallback: "Disk I/O",
     color: "var(--accent-disk)",
     unit: "MB/s",
     max: undefined,
-    listTitleSingle: "Top Disk-Prozesse",
-    listTitleRange: "Top Disk-Prozesse (Zeitraum)",
-    emptyText: "Keine aktive Datenträger-Aktivität in diesem Zeitraum.",
+    listTitleSingleKey: "perf.list.disk",
+    listTitleRangeKey: "perf.list.diskRange",
+    emptyTextKey: "perf.list.diskEmpty",
   },
   net: {
-    label: "Netzwerk",
+    labelKey: "perf.metric.net",
+    labelFallback: "Netzwerk",
     color: "var(--accent-net)",
     unit: "KB/s",
     max: undefined,
-    listTitleSingle: "Top Netzwerk-Prozesse",
-    listTitleRange: "Top Netzwerk-Prozesse (Zeitraum)",
-    emptyText: "Kein messbarer Netzwerk-Durchsatz in diesem Zeitraum.",
+    listTitleSingleKey: "perf.list.net",
+    listTitleRangeKey: "perf.list.netRange",
+    emptyTextKey: "perf.list.netEmpty",
   },
 };
 
@@ -210,6 +214,7 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
   onRestartAsAdmin,
   onActionFeedback,
 }) => {
+  const { t, language } = useI18n();
   const [internalMetric, setInternalMetric] = useState<MetricKey>("cpu");
   const metric: MetricKey = activeMetric
     ? perfToMetricKey(activeMetric)
@@ -351,13 +356,23 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
 
   const metricConfig = {
     ...staticMeta,
-    label: metric === "gpu" ? activeGpuMeta.chartTitle : staticMeta.label,
+    label:
+      metric === "gpu"
+        ? activeGpuMeta.chartTitle
+        : staticMeta.labelKey
+          ? t(staticMeta.labelKey)
+          : staticMeta.labelFallback,
+    listTitleSingle: t(staticMeta.listTitleSingleKey),
+    listTitleRange: t(staticMeta.listTitleRangeKey),
+    emptyText: t(staticMeta.emptyTextKey),
     unit: isDiskActiveChart ? "%" : staticMeta.unit,
     max: isDiskActiveChart ? 100 : staticMeta.max,
     selector: valueSelector,
     current: currentMetricText,
     icon: metricIcon,
   };
+  const gpuSeriesLabel = (key: GpuSeriesKey) =>
+    key === "overall" ? t("perf.gpuOverall") : GPU_SERIES_META[key].label;
 
   // 60-sample mini-history for GPU engine Sparklines (including overall for swap slots)
   const gpuEngineSeries = useMemo<Record<GpuSeriesKey, number[]>>(() => {
@@ -702,9 +717,9 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
     const tsTag = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
 
     const extMap = {
-      json: { ext: "json", name: "JSON-Bericht" },
-      csv: { ext: "csv", name: "CSV-Tabelle" },
-      md: { ext: "md", name: "Markdown-Bericht" },
+      json: { ext: "json", name: t("perf.export.filterJson") },
+      csv: { ext: "csv", name: t("perf.export.filterCsv") },
+      md: { ext: "md", name: t("perf.export.filterMd") },
     }[format];
 
     try {
@@ -775,19 +790,19 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
       } else {
         const spikesList = exportPoints.filter((p) => p.isSpike);
         const mdLines = [
-          `# Spektr Performance-Bericht (${metricConfig.label})`,
+          t("perf.export.mdTitle", { metric: metricConfig.label }),
           "",
           `- **Host**: ${snapshot.system.hostname} (${snapshot.system.osName})`,
-          `- **Zeitraum**: ${formatTimeShort(analytics.startMs)} – ${formatTimeShort(analytics.endMs)} (${exportPoints.length} Samples)`,
+          `- **${t("perf.export.mdRange")}**: ${formatTimeShort(analytics.startMs, language)} – ${formatTimeShort(analytics.endMs, language)} (${exportPoints.length} Samples)`,
           `- **CPU**: Ø ${analytics.avgCpu.toFixed(1)}% / Max ${analytics.maxCpu.toFixed(1)}%`,
           `- **RAM**: Ø ${analytics.avgRam.toFixed(1)}% / Max ${analytics.maxRam.toFixed(1)}%`,
           `- **GPU**: Ø ${analytics.avgGpu.toFixed(1)}% / Max ${analytics.maxGpu.toFixed(1)}%`,
           `- **Disk**: Ø ${analytics.avgDisk.toFixed(1)} MB/s / Peak ${analytics.maxDisk.toFixed(1)} MB/s`,
-          `- **Netzwerk**: Ø ${analytics.avgNet.toFixed(0)} KB/s / Peak ${analytics.maxNet.toFixed(0)} KB/s`,
+          `- **${t("perf.metric.net")}**: Ø ${analytics.avgNet.toFixed(0)} KB/s / Peak ${analytics.maxNet.toFixed(0)} KB/s`,
           "",
-          `## Top Prozesse (${metricConfig.label})`,
+          t("perf.export.mdTopProcs", { metric: metricConfig.label }),
           "",
-          "| Prozess | PID | Ø CPU | Peak CPU | Ø RAM |",
+          t("perf.export.mdTableHeader"),
           "|---|---:|---:|---:|---:|",
           ...analytics.topProcesses.map(
             (p) =>
@@ -797,11 +812,11 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
         if (spikesList.length > 0) {
           mdLines.push(
             "",
-            "## Erkannte Spikes",
+            t("perf.export.mdSpikes"),
             "",
             ...spikesList.map(
               (s) =>
-                `- **${formatTimeShort(s.timestampMs)}** — ${s.spikeReason ?? "Lastspitze"} (CPU ${s.cpuPercent.toFixed(1)}%, RAM ${s.ramPercent.toFixed(1)}%)`
+                `- **${formatTimeShort(s.timestampMs, language)}** — ${localizeSpikeReason(s.spikeReason, language) || t("perf.export.spikeFallback")} (CPU ${s.cpuPercent.toFixed(1)}%, RAM ${s.ramPercent.toFixed(1)}%)`
             )
           );
         }
@@ -811,12 +826,12 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
       await api.exportReport(path, content);
       onActionFeedback?.({
         ok: true,
-        message: `Bericht erfolgreich exportiert (${extMap.ext.toUpperCase()}).`,
+        message: t("perf.export.success", { ext: extMap.ext.toUpperCase() }),
       });
     } catch (err) {
       onActionFeedback?.({
         ok: false,
-        message: `Export fehlgeschlagen: ${String(err)}`,
+        message: t("perf.export.failed", { err: String(err) }),
       });
     }
   };
@@ -856,7 +871,7 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
     },
     {
       id: "net" as const,
-      label: "Netz",
+      label: t("perf.metric.netShort"),
       val: formatSpeed(
         snapshot.network.rxBytesPerSec + snapshot.network.txBytesPerSec
       ),
@@ -956,7 +971,7 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
                 borderColor: "var(--border-subtle)",
                 color: "var(--text-secondary)",
               }}
-              title="Aktuellen Zeitraum & Spike-Analyse exportieren"
+              title={t("perf.exportTooltip")}
             >
               <Download className="w-3.5 h-3.5" />
               <span>Export</span>
@@ -974,19 +989,19 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
                   onClick={() => handleExportReport("md")}
                   className="px-2.5 py-1.5 rounded-lg text-left hover:bg-[var(--bg-surface-hover)] cursor-pointer font-medium"
                 >
-                  Als Markdown (.md)
+                  {t("perf.export.md")}
                 </button>
                 <button
                   onClick={() => handleExportReport("csv")}
                   className="px-2.5 py-1.5 rounded-lg text-left hover:bg-[var(--bg-surface-hover)] cursor-pointer font-medium"
                 >
-                  Als CSV (.csv)
+                  {t("perf.export.csv")}
                 </button>
                 <button
                   onClick={() => handleExportReport("json")}
                   className="px-2.5 py-1.5 rounded-lg text-left hover:bg-[var(--bg-surface-hover)] cursor-pointer font-medium"
                 >
-                  Als JSON (.json)
+                  {t("perf.export.json")}
                 </button>
               </div>
             )}
@@ -1003,7 +1018,7 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
                 {metricConfig.icon}
               </span>
               <h3 className="text-sm font-semibold truncate">
-                {metricConfig.label}-Verlauf & Bereichs-Analyse
+                {t("perf.chartTitle", { metric: metricConfig.label })}
               </h3>
               {metric === "gpu" && activeGpuSeries !== "overall" && (
                 <button
@@ -1013,9 +1028,9 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
                     backgroundColor: "var(--accent-gpu-soft)",
                     color: "var(--accent-gpu)",
                   }}
-                  title="Zurück zur Gesamt-GPU-Ansicht"
+                  title={t("perf.backToOverallTooltip")}
                 >
-                  ← Gesamt
+                  {t("perf.backToOverall")}
                 </button>
               )}
             </div>
@@ -1042,7 +1057,7 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
                           : "var(--text-muted)",
                     }}
                   >
-                    Aktive Zeit %
+                    {t("perf.diskMode.active")}
                   </button>
                   <button
                     onClick={() => setDiskChartMode("throughput")}
@@ -1058,7 +1073,7 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
                           : "var(--text-muted)",
                     }}
                   >
-                    Durchsatz
+                    {t("perf.diskMode.throughput")}
                   </button>
                 </div>
               )}
@@ -1105,30 +1120,32 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
               {isPinned ? (
                 isRangeMode ? (
                   <>
-                    Ausgewählter Bereich:{" "}
+                    {t("perf.status.selectedRange")}{" "}
                     <strong>
-                      {formatTimeShort(analytics.startMs)} –{" "}
-                      {formatTimeShort(analytics.endMs)}
+                      {formatTimeShort(analytics.startMs, language)} –{" "}
+                      {formatTimeShort(analytics.endMs, language)}
                     </strong>{" "}
                     ({analytics.count}s)
                   </>
                 ) : (
                   <>
-                    Fixierter Zeitpunkt:{" "}
-                    <strong>{formatTimeShort(analytics.startMs)}</strong>
+                    {t("perf.status.pinnedPoint")}{" "}
+                    <strong>
+                      {formatTimeShort(analytics.startMs, language)}
+                    </strong>
                   </>
                 )
               ) : hoverPoint ? (
                 <>
-                  Vorschau um{" "}
+                  {t("perf.status.previewAt")}{" "}
                   <strong style={{ color: "var(--text-primary)" }}>
-                    {formatTimeShort(hoverPoint.timestampMs)}
+                    {formatTimeShort(hoverPoint.timestampMs, language)}
                   </strong>{" "}
                   — {metricConfig.selector(hoverPoint).toFixed(1)}{" "}
                   {metricConfig.unit}
                 </>
               ) : (
-                "Live-Ansicht — Bereich im Diagramm aufziehen oder Punkt anklicken"
+                t("perf.status.liveHint")
               )}
             </span>
             {isPinned ? (
@@ -1138,7 +1155,7 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
                 style={{ color: metricConfig.color }}
               >
                 <X className="w-3.5 h-3.5" />
-                Auswahl aufheben
+                {t("perf.status.clearSelection")}
               </button>
             ) : (
               <span className="text-[11px] tabular-nums shrink-0 whitespace-nowrap opacity-75">
@@ -1158,7 +1175,8 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
                   className="text-[11px] font-semibold flex items-center gap-1 shrink-0 mr-0.5"
                   style={{ color: "var(--accent-danger)" }}
                 >
-                  <AlertTriangle className="w-3.5 h-3.5" /> Lastspitzen:
+                  <AlertTriangle className="w-3.5 h-3.5" />{" "}
+                  {t("perf.spikesLabel")}
                 </span>
                 {detectedSpikes.map((point) => {
                   const isIncluded =
@@ -1177,8 +1195,10 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
                         color: isIncluded ? "#ffffff" : "var(--accent-danger)",
                       }}
                     >
-                      {formatTimeShort(point.timestampMs)}
-                      {point.spikeReason ? ` • ${point.spikeReason}` : ""}
+                      {formatTimeShort(point.timestampMs, language)}
+                      {point.spikeReason
+                        ? ` • ${localizeSpikeReason(point.spikeReason, language)}`
+                        : ""}
                     </button>
                   );
                 })}
@@ -1188,7 +1208,7 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
                 className="text-[11px]"
                 style={{ color: "var(--text-muted)" }}
               >
-                Keine Lastspitzen im aktuellen Zeitfenster erkannt.
+                {t("perf.noSpikes")}
               </div>
             )}
           </div>
@@ -1204,7 +1224,9 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
                   style={{ color: metricConfig.color }}
                 />
                 <span className="truncate">
-                  {isRangeMode ? "Bereichs-Auswertung" : "„Was war das gerade?“"}
+                  {isRangeMode
+                    ? t("perf.panel.rangeTitle")
+                    : t("perf.panel.liveTitle")}
                 </span>
               </h3>
               <p
@@ -1212,12 +1234,16 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
                 style={{ color: "var(--text-muted)" }}
               >
                 {isRangeMode
-                  ? `${formatTimeShort(analytics.startMs)} – ${formatTimeShort(analytics.endMs)} (${analytics.count}s)`
+                  ? `${formatTimeShort(analytics.startMs, language)} – ${formatTimeShort(analytics.endMs, language)} (${analytics.count}s)`
                   : isPinned
-                    ? `Momentaufnahme um ${formatTimeShort(analytics.startMs)}`
+                    ? t("perf.panel.snapshotAt", {
+                        time: formatTimeShort(analytics.startMs, language),
+                      })
                     : hoverPoint
-                      ? `Vorschau um ${formatTimeShort(analytics.startMs)}`
-                      : `Live (${formatTimeShort(analytics.startMs)})`}
+                      ? t("perf.panel.previewAt", {
+                          time: formatTimeShort(analytics.startMs, language),
+                        })
+                      : `Live (${formatTimeShort(analytics.startMs, language)})`}
               </p>
             </div>
             <button
@@ -1321,7 +1347,7 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
                 <span className="truncate" style={{ color: "var(--text-muted)" }}>
                   {activeGpuSeries === "overall"
                     ? "Engines (3D · Copy · Enc · Dec)"
-                    : `GPU Gesamt · ${activeGpuMeta.label}`}
+                    : `${t("perf.gpuOverall")} · ${gpuSeriesLabel(activeGpuSeries)}`}
                 </span>
                 <span
                   className="font-semibold shrink-0 whitespace-nowrap"
@@ -1352,7 +1378,7 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
                 {(snapshot.memory.commitTotalBytes ?? 0) > 0 && (
                   <div className="flex items-center justify-between gap-2">
                     <span className="truncate" style={{ color: "var(--text-muted)" }}>
-                      Zugesichert (Commit)
+                      {t("perf.ram.commit")}
                     </span>
                     <span
                       className="font-semibold shrink-0 whitespace-nowrap"
@@ -1369,7 +1395,7 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
                   (snapshot.memory.nonPagedPoolBytes ?? 0) > 0) && (
                   <div className="flex items-center justify-between gap-2">
                     <span className="truncate" style={{ color: "var(--text-muted)" }}>
-                      Ausgelagerter / Nicht-ausgel. Pool
+                      {t("perf.ram.pool")}
                     </span>
                     <span className="font-medium shrink-0 whitespace-nowrap">
                       {formatBytes(snapshot.memory.pagedPoolBytes ?? 0)} /{" "}
@@ -1391,7 +1417,7 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
             >
               <div className="flex items-center justify-between gap-2">
                 <span className="truncate" style={{ color: "var(--text-muted)" }}>
-                  Aktive Zeit · Ø Antwortzeit
+                  {t("perf.disk.activeAndResp")}
                 </span>
                 <span
                   className="font-bold shrink-0 whitespace-nowrap"
@@ -1404,8 +1430,8 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
               <div className="flex items-center justify-between gap-2">
                 <span className="truncate" style={{ color: "var(--text-muted)" }}>
                   {isRangeMode
-                    ? "Durchsatz (Ø / Peak)"
-                    : "Lesen / Schreiben"}
+                    ? t("perf.disk.throughputRange")
+                    : t("perf.disk.readWrite")}
                 </span>
                 <span className="font-semibold shrink-0 whitespace-nowrap">
                   {isRangeMode
@@ -1426,7 +1452,9 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
             >
               <div className="flex items-center justify-between gap-2">
                 <span className="truncate" style={{ color: "var(--text-muted)" }}>
-                  {isRangeMode ? "Durchsatz (Ø / Peak)" : "Netzwerk Durchsatz"}
+                  {isRangeMode
+                    ? t("perf.disk.throughputRange")
+                    : t("perf.net.throughputLive")}
                 </span>
                 <span
                   className="font-bold shrink-0 whitespace-nowrap"
@@ -1475,8 +1503,8 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
                   style={{ color: metricConfig.color }}
                 >
                   {showAllProcesses
-                    ? "Weniger"
-                    : `Alle anzeigen (${totalAvailableProcesses})`}
+                    ? t("perf.showLess")
+                    : t("perf.showAll", { count: totalAvailableProcesses })}
                 </button>
               )}
             </div>
@@ -1497,11 +1525,10 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
                       style={{ color: "var(--accent-net)" }}
                     />
                     <div className="font-semibold" style={{ color: "var(--text-primary)" }}>
-                      Administratorrechte erforderlich
+                      {t("perf.net.adminTitle")}
                     </div>
                     <p className="text-[11px] leading-relaxed max-w-[260px]">
-                      Windows stellt den Netzwerk-Datendurchsatz pro Prozess nur
-                      über Kernel-ETW bereit.
+                      {t("perf.net.adminDesc")}
                     </p>
                     {onRestartAsAdmin && (
                       <button
@@ -1510,7 +1537,7 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
                         style={{ backgroundColor: "var(--accent-net)" }}
                       >
                         <Shield className="w-3.5 h-3.5" />
-                        Als Admin neu starten
+                        {t("processes.restartAsAdmin")}
                       </button>
                     )}
                   </>
@@ -1684,13 +1711,11 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
                   borderColor: "var(--border-subtle)",
                   color: "var(--text-secondary)",
                 }}
-                title="CPU-Last durch Prozesse, die innerhalb derselben Sekunde gestartet und wieder beendet wurden, oder durch Hardware-Interrupts/DPCs."
+                title={t("perf.cpu.residualTooltip")}
               >
                 <span className="flex items-center gap-1.5 min-w-0">
                   <Info className="w-3.5 h-3.5 shrink-0 opacity-70" />
-                  <span className="truncate">
-                    Kurzlebige Prozesse / Kernel-Interrupts
-                  </span>
+                  <span className="truncate">{t("perf.cpu.residualLabel")}</span>
                 </span>
                 <span className="font-semibold tabular-nums shrink-0 whitespace-nowrap">
                   {isRangeMode
@@ -1711,7 +1736,7 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
             <div className="fluent-card p-4 flex flex-col gap-3">
               <div className="flex items-center justify-between gap-2">
                 <h4 className="text-sm font-semibold truncate">
-                  GPU-Engines & Speicher
+                  {t("perf.gpu.enginesAndMem")}
                 </h4>
                 <span
                   className="text-xs font-semibold tabular-nums shrink-0"
@@ -1723,7 +1748,7 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
 
               <div className="grid grid-cols-2 gap-2.5">
                 {gpuBottomSlots.map((slotKey, idx) => {
-                  const meta = GPU_SERIES_META[slotKey];
+                  const slotLabel = gpuSeriesLabel(slotKey);
                   const val = getLiveGpuSeriesVal(slotKey) ?? 0;
                   const series = gpuEngineSeries[slotKey];
                   return (
@@ -1736,14 +1761,14 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
                         backgroundColor: "var(--bg-subtle)",
                         borderColor: "var(--border-subtle)",
                       }}
-                      title={`${meta.label} in das Hauptdiagramm tauschen`}
+                      title={t("perf.gpu.swapTooltip", { label: slotLabel })}
                     >
                       <div className="flex items-center justify-between text-[11px] tabular-nums w-full gap-1">
                         <span
                           className="font-medium flex items-center gap-1 truncate"
                           style={{ color: "var(--text-secondary)" }}
                         >
-                          <span className="truncate">{meta.label}</span>
+                          <span className="truncate">{slotLabel}</span>
                           <ArrowUpDown
                             className="w-3 h-3 opacity-0 group-hover:opacity-80 transition-opacity shrink-0"
                             style={{ color: "var(--accent-gpu)" }}
@@ -1786,7 +1811,7 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
                       <div>
                         <div className="flex items-center justify-between text-[11px] tabular-nums mb-1">
                           <span style={{ color: "var(--text-muted)" }}>
-                            Dedizierter GPU-Speicher
+                            {t("perf.gpu.dedicatedMem")}
                           </span>
                           <span className="font-semibold">
                             {formatBytes(dedUsed)} / {formatBytes(dedTot)}
@@ -1810,7 +1835,7 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
                         <div>
                           <div className="flex items-center justify-between text-[11px] tabular-nums mb-1">
                             <span style={{ color: "var(--text-muted)" }}>
-                              Gemeinsamer GPU-Speicher
+                              {t("perf.gpu.sharedMem")}
                             </span>
                             <span className="font-semibold">
                               {formatBytes(shUsed)} / {formatBytes(shTot)}
@@ -1841,7 +1866,7 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
                             color: "var(--text-secondary)",
                           }}
                         >
-                          <span>GPU-Speicher gesamt</span>
+                          <span>{t("perf.gpu.totalMem")}</span>
                           <span className="font-semibold">
                             {formatBytes(allUsed)} / {formatBytes(allTot)}
                           </span>
@@ -1856,7 +1881,7 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
             {/* Right Card on GPU Tab: GPU Details, Clocks, Fan & Driver Info */}
             <div className="fluent-card p-4 flex flex-col gap-3">
               <h4 className="text-sm font-semibold">
-                GPU-Sensoren & Treiberdetails
+                {t("perf.gpu.sensorsAndDriver")}
               </h4>
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs tabular-nums">
                 <div
@@ -1870,7 +1895,7 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
                     className="text-[10px]"
                     style={{ color: "var(--text-muted)" }}
                   >
-                    Temperatur
+                    {t("perf.gpu.temp")}
                   </div>
                   <div className="text-sm font-bold mt-0.5 flex items-center gap-1 text-emerald-500">
                     <Thermometer className="w-3.5 h-3.5" />
@@ -1891,7 +1916,7 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
                     className="text-[10px]"
                     style={{ color: "var(--text-muted)" }}
                   >
-                    Leistung
+                    {t("perf.gpu.power")}
                   </div>
                   <div className="text-sm font-bold mt-0.5 flex items-center gap-1 text-amber-500">
                     <Zap className="w-3.5 h-3.5" />
@@ -1920,7 +1945,7 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
                     className="text-[10px]"
                     style={{ color: "var(--text-muted)" }}
                   >
-                    Lüfter
+                    {t("perf.gpu.fan")}
                   </div>
                   <div className="text-sm font-bold mt-0.5 flex items-center gap-1">
                     <Fan className="w-3.5 h-3.5 text-sky-500" />
@@ -1941,7 +1966,7 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
                     className="text-[10px]"
                     style={{ color: "var(--text-muted)" }}
                   >
-                    GPU-Takt
+                    {t("perf.gpu.clock")}
                   </div>
                   <div
                     className="text-sm font-bold mt-0.5 flex items-center gap-1"
@@ -1965,7 +1990,7 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
                     className="text-[10px]"
                     style={{ color: "var(--text-muted)" }}
                   >
-                    VRAM-Takt
+                    {t("perf.gpu.vramClock")}
                   </div>
                   <div className="text-sm font-bold mt-0.5">
                     {snapshot.gpu.memoryClockMhz != null
@@ -1985,7 +2010,7 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
                     className="text-[10px]"
                     style={{ color: "var(--text-muted)" }}
                   >
-                    Hersteller
+                    {t("perf.gpu.vendor")}
                   </div>
                   <div className="text-sm font-bold mt-0.5 truncate">
                     {snapshot.gpu.vendor}
@@ -2002,7 +2027,7 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
               >
                 <div className="flex items-center justify-between gap-2">
                   <span style={{ color: "var(--text-muted)" }}>
-                    Treiberversion
+                    {t("perf.gpu.driverVersion")}
                   </span>
                   <span className="font-semibold">
                     {snapshot.gpu.driverVersion ?? "–"}
@@ -2010,7 +2035,7 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
                 </div>
                 <div className="flex items-center justify-between gap-2">
                   <span style={{ color: "var(--text-muted)" }}>
-                    Treiberdatum
+                    {t("perf.gpu.driverDate")}
                   </span>
                   <span className="font-semibold">
                     {snapshot.gpu.driverDate ?? "–"}
@@ -2018,7 +2043,7 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
                 </div>
                 <div className="flex items-center justify-between gap-2">
                   <span style={{ color: "var(--text-muted)" }}>
-                    Physischer Standort
+                    {t("perf.gpu.pciLocation")}
                   </span>
                   <span className="font-semibold truncate">
                     {snapshot.gpu.pciLocation ?? "–"}
@@ -2033,13 +2058,17 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
             <div className="fluent-card p-4 flex flex-col gap-3">
               <div className="flex items-center justify-between gap-2">
                 <h4 className="text-sm font-semibold">
-                  Datenträger-Aktivität & Laufwerke ({snapshot.disk.drives.length})
+                  {t("perf.disk.activityAndDrives", {
+                    count: snapshot.disk.drives.length,
+                  })}
                 </h4>
                 <span
                   className="text-xs font-semibold tabular-nums"
                   style={{ color: "var(--accent-disk)" }}
                 >
-                  Aktive Zeit {(snapshot.disk.activePercent ?? 0).toFixed(0)}%
+                  {t("perf.disk.activeTimeShort", {
+                    pct: (snapshot.disk.activePercent ?? 0).toFixed(0),
+                  })}
                 </span>
               </div>
 
@@ -2055,7 +2084,7 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
                     className="text-[10px]"
                     style={{ color: "var(--text-muted)" }}
                   >
-                    Aktive Zeit
+                    {t("perf.disk.activeTime")}
                   </div>
                   <div
                     className="text-sm font-bold mt-0.5"
@@ -2075,7 +2104,7 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
                     className="text-[10px]"
                     style={{ color: "var(--text-muted)" }}
                   >
-                    Ø Antwortzeit
+                    {t("perf.disk.avgResponse")}
                   </div>
                   <div className="text-sm font-bold mt-0.5">
                     {(snapshot.disk.avgResponseMs ?? 0).toFixed(1)} ms
@@ -2092,7 +2121,7 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
                     className="text-[10px]"
                     style={{ color: "var(--text-muted)" }}
                   >
-                    Lesen
+                    {t("perf.disk.read")}
                   </div>
                   <div className="text-sm font-bold mt-0.5 text-emerald-500">
                     {formatSpeed(snapshot.disk.readBytesPerSec)}
@@ -2109,7 +2138,7 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
                     className="text-[10px]"
                     style={{ color: "var(--text-muted)" }}
                   >
-                    Schreiben
+                    {t("perf.disk.write")}
                   </div>
                   <div className="text-sm font-bold mt-0.5 text-amber-500">
                     {formatSpeed(snapshot.disk.writeBytesPerSec)}
@@ -2120,7 +2149,7 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
               <div className="flex flex-col gap-2">
                 {snapshot.disk.drives.map((d) => {
                   const typeLabel = d.busType
-                    ? `${d.kind !== "Unknown" ? d.kind : "Laufwerk"} (${d.busType})`
+                    ? `${d.kind !== "Unknown" ? d.kind : t("perf.disk.driveFallback")} (${d.busType})`
                     : d.kind;
                   const actPct = d.activePercent ?? 0;
                   return (
@@ -2163,7 +2192,11 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
                           >
                             {typeLabel} · {d.fileSystem} ·{" "}
                             {formatBytes(d.usedBytes)} /{" "}
-                            {formatBytes(d.totalBytes)} ({formatBytes(d.availableBytes)} frei)
+                            {formatBytes(d.totalBytes)} (
+                            {t("perf.disk.freeInline", {
+                              avail: formatBytes(d.availableBytes),
+                            })}
+                            )
                           </div>
                         </div>
                         <div className="text-right shrink-0">
@@ -2171,7 +2204,9 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
                             className="text-xs font-bold"
                             style={{ color: "var(--accent-disk)" }}
                           >
-                            {actPct.toFixed(0)}% aktiv
+                            {t("perf.disk.activeInline", {
+                              pct: actPct.toFixed(0),
+                            })}
                           </div>
                           <div
                             className="text-[10px]"
@@ -2212,7 +2247,7 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
 
             {/* Right Card on Disk Tab: Hardware & Sensoren */}
             <div className="fluent-card p-4 flex flex-col gap-3">
-              <h4 className="text-sm font-semibold">Hardware & Sensoren</h4>
+              <h4 className="text-sm font-semibold">{t("perf.hw.title")}</h4>
               <div className="grid grid-cols-2 gap-2.5 text-xs">
                 <div
                   className="p-3 rounded-xl border min-h-[96px] flex flex-col justify-between"
@@ -2226,7 +2261,7 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
                       className="text-[11px] mb-1"
                       style={{ color: "var(--text-muted)" }}
                     >
-                      Prozessor
+                      {t("perf.hw.cpu")}
                     </div>
                     <div
                       className="font-semibold truncate"
@@ -2238,8 +2273,8 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
                       className="text-[11px] mt-1 tabular-nums truncate"
                       style={{ color: "var(--text-secondary)" }}
                     >
-                      {snapshot.cpu.physicalCores} Kerne /{" "}
-                      {snapshot.cpu.logicalCores} Threads ·{" "}
+                      {t("perf.hw.cores", { cores: snapshot.cpu.physicalCores })}{" "}
+                      / {snapshot.cpu.logicalCores} Threads ·{" "}
                       {(snapshot.cpu.frequencyMhz / 1000).toFixed(2)} GHz
                     </div>
                   </div>
@@ -2256,7 +2291,7 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
                       className="text-[11px] mb-1"
                       style={{ color: "var(--text-muted)" }}
                     >
-                      Grafikkarte
+                      {t("perf.hw.gpu")}
                     </div>
                     <div
                       className="font-semibold truncate"
@@ -2291,7 +2326,7 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
                     className="text-[11px] mb-1"
                     style={{ color: "var(--text-muted)" }}
                   >
-                    Arbeitsspeicher
+                    {t("perf.hw.ram")}
                   </div>
                   <div className="font-semibold tabular-nums">
                     {formatBytes(snapshot.memory.usedBytes)} /{" "}
@@ -2315,7 +2350,7 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
                     className="text-[11px] mb-1"
                     style={{ color: "var(--text-muted)" }}
                   >
-                    Betriebssystem
+                    {t("perf.hw.os")}
                   </div>
                   <div className="font-semibold truncate">
                     {snapshot.system.osName}
@@ -2335,7 +2370,9 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
             <div className="fluent-card p-4">
               <div className="flex items-center justify-between gap-2 mb-3">
                 <h4 className="text-sm font-semibold truncate">
-                  Logische CPU-Kerne ({snapshot.cpu.logicalCores})
+                  {t("perf.hw.logicalCores", {
+                    count: snapshot.cpu.logicalCores,
+                  })}
                 </h4>
                 <div
                   className="text-xs tabular-nums flex items-center gap-2.5 shrink-0 whitespace-nowrap"
@@ -2343,7 +2380,9 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
                   title={
                     snapshot.cpu.baseFrequencyMhz &&
                     snapshot.cpu.baseFrequencyMhz > 0
-                      ? `Aktueller Effektivtakt (Basis: ${(snapshot.cpu.baseFrequencyMhz / 1000).toFixed(2)} GHz)`
+                      ? t("perf.hw.effectiveClockTooltip", {
+                          ghz: (snapshot.cpu.baseFrequencyMhz / 1000).toFixed(2),
+                        })
                       : undefined
                   }
                 >
@@ -2356,8 +2395,9 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
                   {snapshot.cpu.baseFrequencyMhz != null &&
                     snapshot.cpu.baseFrequencyMhz > 0 && (
                       <span className="text-[11px] opacity-75">
-                        Basis {(snapshot.cpu.baseFrequencyMhz / 1000).toFixed(2)}{" "}
-                        GHz
+                        {t("perf.hw.baseClockShort", {
+                          ghz: (snapshot.cpu.baseFrequencyMhz / 1000).toFixed(2),
+                        })}
                       </span>
                     )}
                 </div>
@@ -2365,6 +2405,7 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                 {snapshot.cpu.perCore.map((val, idx) => {
                   const coreMhz = snapshot.cpu.perCoreFrequencyMhz?.[idx];
+                  const coreName = t("perf.hw.coreLabel", { idx });
                   return (
                     <div
                       key={idx}
@@ -2375,13 +2416,13 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
                       }}
                       title={
                         coreMhz
-                          ? `Kern ${idx}: ${val.toFixed(0)}% • ${(coreMhz / 1000).toFixed(2)} GHz`
-                          : `Kern ${idx}: ${val.toFixed(0)}%`
+                          ? `${coreName}: ${val.toFixed(0)}% • ${(coreMhz / 1000).toFixed(2)} GHz`
+                          : `${coreName}: ${val.toFixed(0)}%`
                       }
                     >
                       <div className="flex items-center justify-between text-[11px] tabular-nums mb-1 gap-1">
                         <span style={{ color: "var(--text-muted)" }}>
-                          Kern {idx}
+                          {coreName}
                         </span>
                         <span className="flex items-center gap-1.5">
                           {coreMhz != null && coreMhz > 0 && (
@@ -2421,7 +2462,7 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
             </div>
 
             <div className="fluent-card p-4 flex flex-col gap-3">
-              <h4 className="text-sm font-semibold">Hardware & Sensoren</h4>
+              <h4 className="text-sm font-semibold">{t("perf.hw.title")}</h4>
               <div className="grid grid-cols-2 gap-2.5 text-xs">
                 <div
                   className="p-3 rounded-xl border min-h-[96px] flex flex-col justify-between"
@@ -2431,8 +2472,10 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
                   }}
                   title={
                     snapshot.cpu.sensorSource
-                      ? `CPU-Sensoren via ${snapshot.cpu.sensorSource}`
-                      : "Realtakt via Windows PDH. Für CPU-Temperatur & Watt auf Desktop-Boards ohne ACPI/EMI wird laufendes HWiNFO (Shared Memory) oder LibreHardwareMonitor automatisch erkannt."
+                      ? t("perf.hw.cpuSensorsVia", {
+                          src: snapshot.cpu.sensorSource,
+                        })
+                      : t("perf.hw.cpuSensorsFallback")
                   }
                 >
                   <div>
@@ -2440,7 +2483,7 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
                       className="text-[11px] mb-1"
                       style={{ color: "var(--text-muted)" }}
                     >
-                      Prozessor
+                      {t("perf.hw.cpu")}
                     </div>
                     <div
                       className="font-semibold truncate"
@@ -2452,8 +2495,8 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
                       className="text-[11px] mt-1 tabular-nums truncate"
                       style={{ color: "var(--text-secondary)" }}
                     >
-                      {snapshot.cpu.physicalCores} Kerne /{" "}
-                      {snapshot.cpu.logicalCores} Threads ·{" "}
+                      {t("perf.hw.cores", { cores: snapshot.cpu.physicalCores })}{" "}
+                      / {snapshot.cpu.logicalCores} Threads ·{" "}
                       <span
                         className="font-medium"
                         style={{ color: "var(--accent-cpu)" }}
@@ -2492,12 +2535,12 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
                           className="text-[10px] truncate"
                           style={{ color: "var(--text-muted)" }}
                         >
-                          Basis{" "}
-                          {(
-                            (snapshot.cpu.baseFrequencyMhz ??
-                              snapshot.cpu.frequencyMhz) / 1000
-                          ).toFixed(2)}{" "}
-                          GHz
+                          {t("perf.hw.baseClockShort", {
+                            ghz: (
+                              (snapshot.cpu.baseFrequencyMhz ??
+                                snapshot.cpu.frequencyMhz) / 1000
+                            ).toFixed(2),
+                          })}
                         </span>
                       )}
                   </div>
@@ -2515,7 +2558,7 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
                       className="text-[11px] mb-1"
                       style={{ color: "var(--text-muted)" }}
                     >
-                      Grafikkarte
+                      {t("perf.hw.gpu")}
                     </div>
                     <div
                       className="font-semibold truncate"
@@ -2569,7 +2612,7 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
                     className="text-[11px] mb-1"
                     style={{ color: "var(--text-muted)" }}
                   >
-                    Arbeitsspeicher
+                    {t("perf.hw.ram")}
                   </div>
                   <div className="font-semibold tabular-nums">
                     {formatBytes(snapshot.memory.usedBytes)} /{" "}
@@ -2594,7 +2637,7 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
                     className="text-[11px] mb-1"
                     style={{ color: "var(--text-muted)" }}
                   >
-                    Betriebssystem
+                    {t("perf.hw.os")}
                   </div>
                   <div className="font-semibold truncate">
                     {snapshot.system.osName}

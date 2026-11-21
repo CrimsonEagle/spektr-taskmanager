@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { Play, Terminal, X } from "@phosphor-icons/react";
+import { useI18n } from "../i18n";
 import { api } from "../lib/tauri";
 import { ActionResult } from "../types/telemetry";
 
@@ -20,13 +21,14 @@ const QUICK_COMMANDS = [
 
 export const RunTaskModal: React.FC<RunTaskModalProps> = React.memo(
   ({ onClose, onActionFeedback }) => {
+    const { t } = useI18n();
     const [command, setCommand] = useState("");
     const [running, setRunning] = useState(false);
     const inputRef = useRef<HTMLInputElement>(null);
 
     useEffect(() => {
-      const t = window.setTimeout(() => inputRef.current?.focus(), 20);
-      return () => window.clearTimeout(t);
+      const tmr = window.setTimeout(() => inputRef.current?.focus(), 20);
+      return () => window.clearTimeout(tmr);
     }, []);
 
     const handleSubmit = async (cmdToRun = command) => {
@@ -37,13 +39,13 @@ export const RunTaskModal: React.FC<RunTaskModalProps> = React.memo(
         await api.runNewTask(trimmed);
         onActionFeedback({
           ok: true,
-          message: `Aufgabe „${trimmed}“ gestartet.`,
+          message: t("runTask.started", { cmd: trimmed }),
         });
         onClose();
       } catch (err) {
         onActionFeedback({
           ok: false,
-          message: `Fehler beim Starten: ${String(err)}`,
+          message: t("runTask.failed", { err: String(err) }),
         });
       } finally {
         setRunning(false);
@@ -96,7 +98,7 @@ export const RunTaskModal: React.FC<RunTaskModalProps> = React.memo(
                 className="w-4 h-4"
                 style={{ color: "var(--accent-cpu)" }}
               />
-              <span>Neue Aufgabe ausführen</span>
+              <span>{t("runTask.title")}</span>
             </div>
             <button
               onClick={onClose}
@@ -109,14 +111,14 @@ export const RunTaskModal: React.FC<RunTaskModalProps> = React.memo(
 
           <div className="p-4 flex flex-col gap-3">
             <p className="text-xs" style={{ color: "var(--text-secondary)" }}>
-              Gib den Namen eines Programms, Ordners, Dokuments oder Befehls ein.
+              {t("runTask.desc")}
             </p>
             <div className="flex items-center gap-2">
               <input
                 ref={inputRef}
                 value={command}
                 onChange={(e) => setCommand(e.target.value)}
-                placeholder="z. B. notepad.exe, wt, cmd /k ipconfig…"
+                placeholder={t("runTask.placeholder")}
                 className="flex-1 px-3 py-2 rounded-xl border text-xs font-mono outline-none"
                 style={{
                   backgroundColor: "var(--bg-subtle)",
@@ -131,7 +133,7 @@ export const RunTaskModal: React.FC<RunTaskModalProps> = React.memo(
                 style={{ backgroundColor: "var(--accent-cpu)" }}
               >
                 <Play className="w-3.5 h-3.5" />
-                {running ? "Starte…" : "Ausführen"}
+                {running ? t("runTask.starting") : t("runTask.run")}
               </button>
             </div>
 
@@ -140,7 +142,7 @@ export const RunTaskModal: React.FC<RunTaskModalProps> = React.memo(
                 className="text-[10px] font-medium"
                 style={{ color: "var(--text-muted)" }}
               >
-                Schnellstart:
+                {t("runTask.quickStart")}
               </span>
               {QUICK_COMMANDS.map((cmd) => (
                 <button

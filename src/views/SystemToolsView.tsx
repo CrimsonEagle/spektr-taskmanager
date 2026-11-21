@@ -17,6 +17,11 @@ import {
   Trash as Trash2,
   UploadSimple as Upload,
 } from "@phosphor-icons/react";
+import {
+  localizeServiceStatus,
+  localizeStartupScope,
+  useI18n,
+} from "../i18n";
 import { api } from "../lib/tauri";
 import {
   ActionResult,
@@ -42,6 +47,7 @@ export const SystemToolsView: React.FC<SystemToolsViewProps> = React.memo(
     ruleDraftProcessName,
     onClearRuleDraft,
   }) => {
+    const { t, language } = useI18n();
     const [subTab, setSubTab] = useState<ToolSubTab>("startup");
     const timersRef = useRef<Set<number>>(new Set());
 
@@ -224,19 +230,19 @@ export const SystemToolsView: React.FC<SystemToolsViewProps> = React.memo(
         await api.setServiceStartType(name, startType);
         const label =
           startType === "auto"
-            ? "Automatisch"
+            ? t("tools.services.startType.auto")
             : startType === "manual"
-              ? "Manuell"
-              : "Deaktiviert";
+              ? t("tools.services.startType.manual")
+              : t("tools.services.startType.disabled");
         onActionFeedback({
           ok: true,
-          message: `Starttyp von „${name}“ auf ${label} gesetzt.`,
+          message: t("tools.services.startTypeSaved", { name, label }),
         });
         loadServices();
       } catch (err) {
         onActionFeedback({
           ok: false,
-          message: `Starttyp konnte nicht geändert werden: ${String(err)}`,
+          message: t("tools.services.startTypeError", { err: String(err) }),
         });
       }
     };
@@ -302,12 +308,12 @@ export const SystemToolsView: React.FC<SystemToolsViewProps> = React.memo(
         resetRuleForm();
         onActionFeedback({
           ok: true,
-          message: `Regel für „${procName}“ gespeichert.`,
+          message: t("tools.rules.savedToast", { name: procName }),
         });
       } catch (err) {
         onActionFeedback({
           ok: false,
-          message: `Regel konnte nicht gespeichert werden: ${String(err)}`,
+          message: t("tools.rules.saveError", { err: String(err) }),
         });
       }
     };
@@ -331,7 +337,7 @@ export const SystemToolsView: React.FC<SystemToolsViewProps> = React.memo(
         if (editingRuleId === rule.id) resetRuleForm();
         onActionFeedback({
           ok: true,
-          message: `Regel für „${rule.processName}“ gelöscht.`,
+          message: t("tools.rules.deletedToast", { name: rule.processName }),
         });
       } catch (err) {
         onActionFeedback({ ok: false, message: String(err) });
@@ -389,45 +395,45 @@ export const SystemToolsView: React.FC<SystemToolsViewProps> = React.memo(
               [
                 {
                   id: "startup",
-                  label: "Autostart",
+                  label: t("tools.tab.startup"),
                   icon: <Rocket className="w-3.5 h-3.5" />,
                   color: "var(--accent-disk)",
                 },
                 {
                   id: "services",
-                  label: "Windows-Dienste",
+                  label: t("tools.tab.services"),
                   icon: <Cog className="w-3.5 h-3.5" />,
                   color: "var(--accent-cpu)",
                 },
                 {
                   id: "filelock",
-                  label: "File Lock Finder",
+                  label: t("tools.tab.filelock"),
                   icon: <FileLock2 className="w-3.5 h-3.5" />,
                   color: "var(--accent-net)",
                 },
                 {
                   id: "rules",
-                  label: "Prozess-Regeln",
+                  label: t("tools.tab.rules"),
                   icon: <SlidersHorizontal className="w-3.5 h-3.5" />,
                   color: "var(--accent-ram)",
                 },
               ] as const
-            ).map((t) => {
-              const active = subTab === t.id;
+            ).map((tabItem) => {
+              const active = subTab === tabItem.id;
               return (
                 <button
-                  key={t.id}
-                  onClick={() => setSubTab(t.id)}
+                  key={tabItem.id}
+                  onClick={() => setSubTab(tabItem.id)}
                   className="flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer"
                   style={{
                     backgroundColor: active
                       ? "var(--bg-surface-active)"
                       : "transparent",
-                    color: active ? t.color : "var(--text-secondary)",
+                    color: active ? tabItem.color : "var(--text-secondary)",
                   }}
                 >
-                  {t.icon}
-                  <span>{t.label}</span>
+                  {tabItem.icon}
+                  <span>{tabItem.label}</span>
                 </button>
               );
             })}
@@ -450,7 +456,7 @@ export const SystemToolsView: React.FC<SystemToolsViewProps> = React.memo(
               }}
             >
               <RefreshCw className="w-3.5 h-3.5" />
-              Aktualisieren
+              {t("tools.refresh")}
             </button>
           )}
         </div>
@@ -466,10 +472,10 @@ export const SystemToolsView: React.FC<SystemToolsViewProps> = React.memo(
                 color: "var(--text-muted)",
               }}
             >
-              <span>Programm</span>
-              <span>Startbefehl</span>
-              <span>Bereich / Quelle</span>
-              <span className="text-right">Status</span>
+              <span>{t("tools.startup.col.program")}</span>
+              <span>{t("tools.startup.col.command")}</span>
+              <span>{t("tools.startup.col.scope")}</span>
+              <span className="text-right">{t("tools.startup.col.status")}</span>
             </div>
 
             <div className="flex-1 overflow-y-auto">
@@ -478,14 +484,14 @@ export const SystemToolsView: React.FC<SystemToolsViewProps> = React.memo(
                   className="p-8 text-center text-xs"
                   style={{ color: "var(--text-muted)" }}
                 >
-                  Lese Windows-Autostart-Einträge…
+                  {t("tools.startup.loading")}
                 </div>
               ) : startupItems.length === 0 ? (
                 <div
                   className="p-8 text-center text-xs"
                   style={{ color: "var(--text-muted)" }}
                 >
-                  Keine Autostart-Einträge gefunden.
+                  {t("tools.startup.empty")}
                 </div>
               ) : (
                 startupItems.map((item) => {
@@ -520,7 +526,9 @@ export const SystemToolsView: React.FC<SystemToolsViewProps> = React.memo(
                                 : "var(--accent-disk)",
                           }}
                         >
-                          {isTaskScheduler ? "Aufgabenplanung" : item.scope}
+                          {isTaskScheduler
+                            ? t("tools.startup.taskScheduler")
+                            : localizeStartupScope(item.scope, language)}
                         </span>
                       </div>
                       <div className="flex justify-end">
@@ -538,10 +546,10 @@ export const SystemToolsView: React.FC<SystemToolsViewProps> = React.memo(
                           }}
                           title={
                             isTaskScheduler
-                              ? "Aufgabenplanung-Einträge sind schreibgeschützt (über Windows-Aufgabenplanung verwalten)"
+                              ? t("tools.startup.taskSchedulerTooltip")
                               : item.enabled
-                                ? "Deaktivieren"
-                                : "Aktivieren"
+                                ? t("tools.startup.disable")
+                                : t("tools.startup.enable")
                           }
                         >
                           <span className="w-4.5 h-4.5 rounded-full bg-white shadow-sm block" />
@@ -573,7 +581,7 @@ export const SystemToolsView: React.FC<SystemToolsViewProps> = React.memo(
                 <input
                   value={svcSearch}
                   onChange={(e) => setSvcSearch(e.target.value)}
-                  placeholder="Windows-Dienst suchen…"
+                  placeholder={t("tools.services.searchPlaceholder")}
                   className="bg-transparent outline-none text-xs flex-1"
                   style={{ color: "var(--text-primary)" }}
                 />
@@ -582,11 +590,23 @@ export const SystemToolsView: React.FC<SystemToolsViewProps> = React.memo(
               <div className="flex items-center gap-1.5">
                 {(
                   [
-                    { id: "all", label: `Alle (${services.length})` },
-                    { id: "active", label: `Aktiv (${activeServiceCount})` },
+                    {
+                      id: "all",
+                      label: t("tools.services.filter.all", {
+                        count: services.length,
+                      }),
+                    },
+                    {
+                      id: "active",
+                      label: t("tools.services.filter.active", {
+                        count: activeServiceCount,
+                      }),
+                    },
                     {
                       id: "stopped",
-                      label: `Gestoppt (${stoppedServiceCount})`,
+                      label: t("tools.services.filter.stopped", {
+                        count: stoppedServiceCount,
+                      }),
                     },
                   ] as const
                 ).map((f) => (
@@ -624,12 +644,12 @@ export const SystemToolsView: React.FC<SystemToolsViewProps> = React.memo(
                   color: "var(--text-muted)",
                 }}
               >
-                <span>Anzeigename</span>
-                <span>Dienstname</span>
+                <span>{t("tools.services.col.displayName")}</span>
+                <span>{t("tools.services.col.name")}</span>
                 <span>PID</span>
-                <span>Status</span>
-                <span>Starttyp</span>
-                <span className="text-right">Steuerung</span>
+                <span>{t("tools.services.col.status")}</span>
+                <span>{t("tools.services.col.startType")}</span>
+                <span className="text-right">{t("tools.services.col.controls")}</span>
               </div>
 
               <div className="flex-1 overflow-y-auto">
@@ -638,7 +658,7 @@ export const SystemToolsView: React.FC<SystemToolsViewProps> = React.memo(
                     className="p-8 text-center text-xs"
                     style={{ color: "var(--text-muted)" }}
                   >
-                    Lade Windows-Dienste…
+                    {t("tools.services.loading")}
                   </div>
                 ) : (
                   filteredServices.slice(0, 250).map((svc) => {
@@ -672,7 +692,9 @@ export const SystemToolsView: React.FC<SystemToolsViewProps> = React.memo(
                                 backgroundColor: "var(--accent-cpu-soft)",
                                 color: "var(--accent-cpu)",
                               }}
-                              title={`Prozess PID ${svc.pid} im Inspector öffnen`}
+                              title={t("tools.services.inspectTooltip", {
+                                pid: svc.pid,
+                              })}
                             >
                               PID {svc.pid}
                             </button>
@@ -699,7 +721,7 @@ export const SystemToolsView: React.FC<SystemToolsViewProps> = React.memo(
                                   : "var(--text-muted)",
                             }}
                           >
-                            {svc.status}
+                            {localizeServiceStatus(svc.status, language)}
                           </span>
                         </div>
                         <div>
@@ -712,7 +734,9 @@ export const SystemToolsView: React.FC<SystemToolsViewProps> = React.memo(
                                 | "disabled";
                               if (val) handleServiceStartType(svc.name, val);
                             }}
-                            aria-label={`Starttyp für ${svc.name}`}
+                            aria-label={t("tools.services.startTypeAria", {
+                              name: svc.name,
+                            })}
                             className="w-full px-2 py-1 rounded-lg text-[11px] border outline-none cursor-pointer"
                             style={{
                               backgroundColor: "var(--bg-surface-solid)",
@@ -722,12 +746,18 @@ export const SystemToolsView: React.FC<SystemToolsViewProps> = React.memo(
                           >
                             {!normalizedStartType && (
                               <option value="" disabled>
-                                Starttyp…
+                                {t("tools.services.startTypePlaceholder")}
                               </option>
                             )}
-                            <option value="auto">Automatisch</option>
-                            <option value="manual">Manuell</option>
-                            <option value="disabled">Deaktiviert</option>
+                            <option value="auto">
+                              {t("tools.services.startType.auto")}
+                            </option>
+                            <option value="manual">
+                              {t("tools.services.startType.manual")}
+                            </option>
+                            <option value="disabled">
+                              {t("tools.services.startType.disabled")}
+                            </option>
                           </select>
                         </div>
                         <div className="flex items-center justify-end gap-1 opacity-75 group-hover:opacity-100">
@@ -737,7 +767,7 @@ export const SystemToolsView: React.FC<SystemToolsViewProps> = React.memo(
                                 handleControlService(svc.name, "start")
                               }
                               className="p-1.5 rounded-lg hover:bg-emerald-500/15 text-emerald-500 cursor-pointer"
-                              title="Dienst starten"
+                              title={t("tools.services.start")}
                             >
                               <Play className="w-3.5 h-3.5" />
                             </button>
@@ -748,7 +778,7 @@ export const SystemToolsView: React.FC<SystemToolsViewProps> = React.memo(
                                   handleControlService(svc.name, "restart")
                                 }
                                 className="p-1.5 rounded-lg hover:bg-sky-500/15 text-sky-500 cursor-pointer"
-                                title="Dienst neu starten"
+                                title={t("tools.services.restart")}
                               >
                                 <RotateCw className="w-3.5 h-3.5" />
                               </button>
@@ -757,7 +787,7 @@ export const SystemToolsView: React.FC<SystemToolsViewProps> = React.memo(
                                   handleControlService(svc.name, "stop")
                                 }
                                 className="p-1.5 rounded-lg hover:bg-red-500/15 text-red-500 cursor-pointer"
-                                title="Dienst stoppen"
+                                title={t("tools.services.stop")}
                               >
                                 <Square className="w-3.5 h-3.5" />
                               </button>
@@ -788,16 +818,13 @@ export const SystemToolsView: React.FC<SystemToolsViewProps> = React.memo(
               </div>
               <div>
                 <h3 className="text-base font-semibold">
-                  Wer blockiert diese Datei oder diesen Ordner?
+                  {t("tools.filelock.title")}
                 </h3>
                 <p
                   className="text-xs mt-1"
                   style={{ color: "var(--text-secondary)" }}
                 >
-                  Wähle eine Datei bzw. einen Ordner aus oder ziehe das Objekt
-                  einfach per Drag &amp; Drop hier hinein. Spektr ermittelt über
-                  die native Windows Restart Manager API sofort blockierende
-                  Prozesse.
+                  {t("tools.filelock.desc")}
                 </p>
               </div>
             </div>
@@ -820,8 +847,8 @@ export const SystemToolsView: React.FC<SystemToolsViewProps> = React.memo(
               <Upload className="w-4 h-4 shrink-0" />
               <span>
                 {isDraggingFile
-                  ? "Hier loslassen, um Sperren sofort zu prüfen…"
-                  : "Datei oder Ordner hierher ziehen (Drag & Drop)"}
+                  ? t("tools.filelock.dropActive")
+                  : t("tools.filelock.dropIdle")}
               </span>
             </div>
 
@@ -832,7 +859,7 @@ export const SystemToolsView: React.FC<SystemToolsViewProps> = React.memo(
                 onKeyDown={(e) =>
                   e.key === "Enter" && runFileLockCheck(filePath)
                 }
-                placeholder="C:\Pfad\zur\blockierten\datei.ext oder Ordner"
+                placeholder={t("tools.filelock.placeholder")}
                 className="flex-1 min-w-[220px] px-3.5 py-2.5 rounded-xl border text-xs font-mono outline-none"
                 style={{
                   backgroundColor: "var(--bg-subtle)",
@@ -849,7 +876,7 @@ export const SystemToolsView: React.FC<SystemToolsViewProps> = React.memo(
                 }}
               >
                 <FolderSearch className="w-4 h-4" />
-                Datei wählen
+                {t("tools.filelock.pickFile")}
               </button>
               <button
                 onClick={handlePickAndCheckFolder}
@@ -860,7 +887,7 @@ export const SystemToolsView: React.FC<SystemToolsViewProps> = React.memo(
                 }}
               >
                 <FolderOpen className="w-4 h-4" />
-                Ordner wählen
+                {t("tools.filelock.pickFolder")}
               </button>
               <button
                 onClick={() => runFileLockCheck(filePath)}
@@ -868,7 +895,9 @@ export const SystemToolsView: React.FC<SystemToolsViewProps> = React.memo(
                 className="px-4 py-2.5 rounded-xl text-xs font-semibold text-white cursor-pointer disabled:opacity-40"
                 style={{ backgroundColor: "var(--accent-net)" }}
               >
-                {lockLoading ? "Prüfe…" : "Prüfen"}
+                {lockLoading
+                  ? t("tools.filelock.checking")
+                  : t("tools.filelock.check")}
               </button>
             </div>
 
@@ -884,9 +913,7 @@ export const SystemToolsView: React.FC<SystemToolsViewProps> = React.memo(
                     }}
                   >
                     <CheckCircle2 className="w-4 h-4 shrink-0" />
-                    <span>
-                      Kein Prozess sperrt diesen Pfad aktuell — er ist frei!
-                    </span>
+                    <span>{t("tools.filelock.free")}</span>
                   </div>
                 ) : (
                   <>
@@ -894,7 +921,7 @@ export const SystemToolsView: React.FC<SystemToolsViewProps> = React.memo(
                       className="text-xs font-semibold"
                       style={{ color: "var(--accent-danger)" }}
                     >
-                      {lockResults.length} blockierende(r) Prozess(e) gefunden:
+                      {t("tools.filelock.found", { count: lockResults.length })}
                     </div>
                     {lockResults.map((lock) => (
                       <div
@@ -928,7 +955,7 @@ export const SystemToolsView: React.FC<SystemToolsViewProps> = React.memo(
                             className="px-3 py-1.5 rounded-lg text-xs font-medium border cursor-pointer hover:bg-[var(--bg-surface-hover)]"
                             style={{ borderColor: "var(--border-subtle)" }}
                           >
-                            Details
+                            {t("tools.filelock.details")}
                           </button>
                           <button
                             onClick={async () => {
@@ -946,7 +973,7 @@ export const SystemToolsView: React.FC<SystemToolsViewProps> = React.memo(
                             }}
                           >
                             <Trash2 className="w-3.5 h-3.5" />
-                            Freigeben (Kill)
+                            {t("tools.filelock.unlockKill")}
                           </button>
                         </div>
                       </div>
@@ -972,7 +999,9 @@ export const SystemToolsView: React.FC<SystemToolsViewProps> = React.memo(
                     className="w-4 h-4"
                     style={{ color: "var(--accent-ram)" }}
                   />
-                  {editingRuleId ? "Regel bearbeiten" : "Neue Prozess-Regel"}
+                  {editingRuleId
+                    ? t("tools.rules.editTitle")
+                    : t("tools.rules.newTitle")}
                 </h3>
                 {editingRuleId && (
                   <button
@@ -981,7 +1010,7 @@ export const SystemToolsView: React.FC<SystemToolsViewProps> = React.memo(
                     className="text-[11px] hover:underline cursor-pointer"
                     style={{ color: "var(--text-muted)" }}
                   >
-                    Abbrechen
+                    {t("tools.rules.cancel")}
                   </button>
                 )}
               </div>
@@ -991,12 +1020,12 @@ export const SystemToolsView: React.FC<SystemToolsViewProps> = React.memo(
                   className="text-[11px] font-medium"
                   style={{ color: "var(--text-muted)" }}
                 >
-                  Prozessname (z. B. chrome.exe, node.exe)
+                  {t("tools.rules.procLabel")}
                 </label>
                 <input
                   value={ruleProcName}
                   onChange={(e) => setRuleProcName(e.target.value)}
-                  placeholder="prozess.exe"
+                  placeholder={t("tools.rules.procPlaceholder")}
                   required
                   className="px-3 py-2 rounded-xl border text-xs font-mono outline-none"
                   style={{
@@ -1013,7 +1042,7 @@ export const SystemToolsView: React.FC<SystemToolsViewProps> = React.memo(
                     className="text-[11px] font-medium"
                     style={{ color: "var(--text-muted)" }}
                   >
-                    Priorität
+                    {t("tools.rules.priority")}
                   </label>
                   <select
                     value={rulePriority}
@@ -1025,12 +1054,16 @@ export const SystemToolsView: React.FC<SystemToolsViewProps> = React.memo(
                       color: "var(--text-primary)",
                     }}
                   >
-                    <option value="">Unverändert</option>
-                    <option value="idle">Niedrig (Idle)</option>
-                    <option value="below_normal">Niedriger als Normal</option>
-                    <option value="normal">Normal</option>
-                    <option value="above_normal">Höher als Normal</option>
-                    <option value="high">Hoch</option>
+                    <option value="">{t("tools.rules.unchanged")}</option>
+                    <option value="idle">{t("tools.rules.prio.idle")}</option>
+                    <option value="below_normal">
+                      {t("tools.rules.prio.belowNormal")}
+                    </option>
+                    <option value="normal">{t("tools.rules.prio.normal")}</option>
+                    <option value="above_normal">
+                      {t("tools.rules.prio.aboveNormal")}
+                    </option>
+                    <option value="high">{t("tools.rules.prio.high")}</option>
                   </select>
                 </div>
 
@@ -1039,7 +1072,7 @@ export const SystemToolsView: React.FC<SystemToolsViewProps> = React.memo(
                     className="text-[11px] font-medium"
                     style={{ color: "var(--text-muted)" }}
                   >
-                    Eco-Modus
+                    {t("tools.rules.ecoMode")}
                   </label>
                   <select
                     value={ruleEcoMode}
@@ -1051,9 +1084,9 @@ export const SystemToolsView: React.FC<SystemToolsViewProps> = React.memo(
                       color: "var(--text-primary)",
                     }}
                   >
-                    <option value="">Unverändert</option>
-                    <option value="on">Aktivieren</option>
-                    <option value="off">Deaktivieren</option>
+                    <option value="">{t("tools.rules.unchanged")}</option>
+                    <option value="on">{t("tools.rules.enable")}</option>
+                    <option value="off">{t("tools.rules.disable")}</option>
                   </select>
                 </div>
               </div>
@@ -1064,7 +1097,7 @@ export const SystemToolsView: React.FC<SystemToolsViewProps> = React.memo(
                     className="text-[11px] font-medium"
                     style={{ color: "var(--text-muted)" }}
                   >
-                    CPU-Alarm ab (%)
+                    {t("tools.rules.cpuAlert")}
                   </label>
                   <input
                     type="number"
@@ -1072,7 +1105,7 @@ export const SystemToolsView: React.FC<SystemToolsViewProps> = React.memo(
                     max={100}
                     value={ruleAlertCpu}
                     onChange={(e) => setRuleAlertCpu(e.target.value)}
-                    placeholder="z. B. 80"
+                    placeholder={t("tools.rules.cpuPlaceholder")}
                     className="px-3 py-2 rounded-xl border text-xs tabular-nums outline-none"
                     style={{
                       backgroundColor: "var(--bg-subtle)",
@@ -1086,14 +1119,14 @@ export const SystemToolsView: React.FC<SystemToolsViewProps> = React.memo(
                     className="text-[11px] font-medium"
                     style={{ color: "var(--text-muted)" }}
                   >
-                    RAM-Alarm ab (MB)
+                    {t("tools.rules.ramAlert")}
                   </label>
                   <input
                     type="number"
                     min={16}
                     value={ruleAlertRam}
                     onChange={(e) => setRuleAlertRam(e.target.value)}
-                    placeholder="z. B. 4096"
+                    placeholder={t("tools.rules.ramPlaceholder")}
                     className="px-3 py-2 rounded-xl border text-xs tabular-nums outline-none"
                     style={{
                       backgroundColor: "var(--bg-subtle)",
@@ -1110,7 +1143,9 @@ export const SystemToolsView: React.FC<SystemToolsViewProps> = React.memo(
                 className="mt-1 py-2 rounded-xl text-xs font-semibold text-white cursor-pointer disabled:opacity-40"
                 style={{ backgroundColor: "var(--accent-ram)" }}
               >
-                {editingRuleId ? "Änderungen speichern" : "Regel speichern"}
+                {editingRuleId
+                  ? t("tools.rules.saveChanges")
+                  : t("tools.rules.saveRule")}
               </button>
             </form>
 
@@ -1124,8 +1159,10 @@ export const SystemToolsView: React.FC<SystemToolsViewProps> = React.memo(
                   color: "var(--text-muted)",
                 }}
               >
-                <span>Gespeicherte Regeln ({rules.length})</span>
-                <span>Automatisch bei Prozessstart</span>
+                <span>
+                  {t("tools.rules.savedHeader", { count: rules.length })}
+                </span>
+                <span>{t("tools.rules.autoApplyHeader")}</span>
               </div>
 
               <div className="flex-1 overflow-y-auto p-3 flex flex-col gap-2">
@@ -1134,16 +1171,14 @@ export const SystemToolsView: React.FC<SystemToolsViewProps> = React.memo(
                     className="p-8 text-center text-xs"
                     style={{ color: "var(--text-muted)" }}
                   >
-                    Lade Prozess-Regeln…
+                    {t("tools.rules.loading")}
                   </div>
                 ) : rules.length === 0 ? (
                   <div
                     className="p-8 text-center text-xs"
                     style={{ color: "var(--text-muted)" }}
                   >
-                    Noch keine Regeln angelegt. Erstelle links eine Regel, um
-                    Prioritäten, Eco-Modus oder Ressourcen-Alarme automatisch
-                    anzuwenden.
+                    {t("tools.rules.empty")}
                   </div>
                 ) : (
                   rules.map((rule) => (
@@ -1180,7 +1215,10 @@ export const SystemToolsView: React.FC<SystemToolsViewProps> = React.memo(
                                 color: "var(--accent-gpu)",
                               }}
                             >
-                              Eco: {rule.ecoMode ? "Ein" : "Aus"}
+                              Eco:{" "}
+                              {rule.ecoMode
+                                ? t("tools.rules.ecoOn")
+                                : t("tools.rules.ecoOff")}
                             </span>
                           )}
                           {rule.alertCpuPct != null && (
@@ -1214,7 +1252,7 @@ export const SystemToolsView: React.FC<SystemToolsViewProps> = React.memo(
                           className="px-2 py-1 rounded-lg text-[11px] font-medium border cursor-pointer hover:bg-[var(--bg-surface-hover)]"
                           style={{ borderColor: "var(--border-subtle)" }}
                         >
-                          Bearbeiten
+                          {t("tools.rules.edit")}
                         </button>
                         <button
                           onClick={() => handleToggleRule(rule)}
@@ -1227,14 +1265,18 @@ export const SystemToolsView: React.FC<SystemToolsViewProps> = React.memo(
                               ? "flex-end"
                               : "flex-start",
                           }}
-                          title={rule.enabled ? "Deaktivieren" : "Aktivieren"}
+                          title={
+                            rule.enabled
+                              ? t("tools.rules.disable")
+                              : t("tools.rules.enable")
+                          }
                         >
                           <span className="w-4 h-4 rounded-full bg-white shadow-sm block" />
                         </button>
                         <button
                           onClick={() => handleDeleteRule(rule)}
                           className="p-1.5 rounded-lg hover:bg-red-500/15 text-red-500 cursor-pointer"
-                          title="Regel löschen"
+                          title={t("tools.rules.delete")}
                         >
                           <Trash2 className="w-3.5 h-3.5" />
                         </button>
