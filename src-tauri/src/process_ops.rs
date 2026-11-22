@@ -422,7 +422,7 @@ pub fn restart_as_admin() -> Result<(), String> {
             None,
             w!("runas"),
             PCWSTR(wide_exe.as_ptr()),
-            PCWSTR::null(),
+            w!("--elevated-handoff"),
             PCWSTR::null(),
             SW_SHOWNORMAL,
         );

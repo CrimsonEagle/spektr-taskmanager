@@ -9,6 +9,7 @@ mod network;
 mod process_inspect;
 mod process_ops;
 mod rules;
+mod single_instance;
 mod startup_services;
 mod telemetry;
 mod tray_icon;
@@ -132,6 +133,7 @@ pub struct AppState {
     pub pending_mini_hud: Arc<AtomicBool>,
     pub was_maximized: Arc<AtomicBool>,
     pub window_lock: Arc<Mutex<()>>,
+    pub single_instance: Arc<single_instance::SingleInstanceGuard>,
 }
 
 #[cfg(windows)]
@@ -154,6 +156,27 @@ fn apply_low_memory_webview2(win: &tauri::WebviewWindow) {
 #[cfg(not(windows))]
 fn apply_low_memory_webview2(_win: &tauri::WebviewWindow) {}
 
+#[cfg(windows)]
+fn bring_window_to_front(win: &tauri::WebviewWindow) {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        IsIconic, SetForegroundWindow, ShowWindow, SW_RESTORE,
+    };
+
+    if let Ok(raw_hwnd) = win.hwnd() {
+        let hwnd = HWND(raw_hwnd.0);
+        unsafe {
+            if IsIconic(hwnd).as_bool() {
+                let _ = ShowWindow(hwnd, SW_RESTORE);
+            }
+            let _ = SetForegroundWindow(hwnd);
+        }
+    }
+}
+
+#[cfg(not(windows))]
+fn bring_window_to_front(_win: &tauri::WebviewWindow) {}
+
 fn open_or_focus_main_window(app: &AppHandle, start_maximized: bool, open_as_mini_hud: bool) {
     let state = app.state::<AppState>();
     let _guard = state
@@ -163,9 +186,10 @@ fn open_or_focus_main_window(app: &AppHandle, start_maximized: bool, open_as_min
     state.tray_parked.store(false, Ordering::Relaxed);
 
     if let Some(win) = app.get_webview_window("main") {
-        let _ = win.show();
         let _ = win.unminimize();
+        let _ = win.show();
         let _ = win.set_focus();
+        bring_window_to_front(&win);
         if open_as_mini_hud {
             let _ = win.emit("toggle-mini-hud", ());
         }
@@ -212,6 +236,7 @@ fn open_or_focus_main_window(app: &AppHandle, start_maximized: bool, open_as_min
         }
         let _ = win.show();
         let _ = win.set_focus();
+        bring_window_to_front(&win);
         if let Ok(mut ui) = state.ui_state.lock() {
             ui.visible = true;
             ui.mini_hud = open_as_mini_hud;
@@ -577,6 +602,7 @@ fn is_elevated() -> bool {
 #[tauri::command]
 fn restart_as_admin(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
     process_ops::restart_as_admin()?;
+    state.single_instance.release();
     state.explicit_exit.store(true, Ordering::Relaxed);
     app.exit(0);
     Ok(())
@@ -807,6 +833,19 @@ fn setup_tray(app: &AppHandle, lang: &str) -> tauri::Result<()> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Enforce single instance before starting Tauri/WebView2.
+    // If Spektr is already running (even parked in the tray or elevated as Admin),
+    // signal it to open/focus its window and exit immediately.
+    let cli_args: Vec<String> = std::env::args().collect();
+    let is_elevated_handoff = cli_args.iter().any(|a| a == "--elevated-handoff");
+    let launch_minimized = cli_args
+        .iter()
+        .any(|a| a == "--start-minimized" || a == "--minimized" || a == "--tray");
+    let single_instance = match single_instance::acquire(is_elevated_handoff, launch_minimized) {
+        single_instance::AcquireResult::Primary(guard) => Arc::new(guard),
+        single_instance::AcquireResult::AlreadyRunning => return,
+    };
+
     // Keep the main UI thread 100% free of MTA COM/WMI/DXGI calls so Tauri's OleInitialize (STA) succeeds.
     let engine: Arc<Mutex<Option<TelemetryEngine>>> = Arc::new(Mutex::new(None));
     let latest: Arc<Mutex<Option<Arc<TelemetrySnapshot>>>> = Arc::new(Mutex::new(None));
@@ -842,6 +881,7 @@ pub fn run() {
     let setup_minimize_to_tray_on_minimize = Arc::clone(&minimize_to_tray_on_minimize);
     let setup_tray_cpu_icon = Arc::clone(&tray_cpu_icon);
     let setup_language = Arc::clone(&language);
+    let setup_single_instance = Arc::clone(&single_instance);
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -863,6 +903,7 @@ pub fn run() {
             pending_mini_hud,
             was_maximized,
             window_lock,
+            single_instance,
         })
         .on_window_event(|window, event| {
             if window.label() == "main" {
@@ -958,6 +999,11 @@ pub fn run() {
                 .unwrap_or_else(|_| "de".to_string());
             let _ = setup_tray(app.handle(), &initial_lang);
 
+            let wake_app_handle = app.handle().clone();
+            setup_single_instance.start_listener(move || {
+                open_or_focus_main_window(&wake_app_handle, false, false);
+            });
+
             // Apply requested startup window mode (normal / maximized / minimized to tray).
             // In minimized-to-tray mode we intentionally skip creating any WebView window so
             // zero msedgewebview2.exe processes spawn until the user opens Spektr from the tray.
@@ -995,7 +1041,6 @@ pub fn run() {
                     let _ = handle.emit("telemetry-update", first_snap.as_ref());
 
                     let mut last_wake_gen = 0u64;
-                    let mut loop_tick: u64 = 0;
                     let mut last_tooltip = String::new();
                     let mut tray_cpu_hist = [0u8; 14];
                     let mut last_tray_icon_state: Option<([u8; 14], u8)> = None;
@@ -1018,27 +1063,10 @@ pub fn run() {
                             }
                         }
 
-                        let (ui_visible, mini_hud) = bg_ui_state
-                            .lock()
-                            .map(|u| (u.visible, u.mini_hud))
-                            .unwrap_or((true, false));
-
-                        let win_hidden_or_min = handle
-                            .get_webview_window("main")
-                            .map(|w| {
-                                let vis = w.is_visible().unwrap_or(true);
-                                let min = w.is_minimized().unwrap_or(false);
-                                !vis || min
-                            })
-                            .unwrap_or(true);
-
-                        let is_idle = (!ui_visible || win_hidden_or_min) && !mini_hud;
-                        let base_delay = bg_refresh.lock().map(|g| *g).unwrap_or(1000);
-                        let delay_ms = if is_idle {
-                            base_delay.max(4000)
-                        } else {
-                            base_delay
-                        };
+                        // Always honor the user-configured refresh interval (including when
+                        // minimized or parked in the system tray) so history charts, rules,
+                        // and the live CPU tray icon stay continuous and responsive.
+                        let delay_ms = bg_refresh.lock().map(|g| *g).unwrap_or(1000);
 
                         let (lock, cvar) = &*bg_wake;
                         if let Ok(mut gen_guard) = lock.lock() {
@@ -1064,7 +1092,6 @@ pub fn run() {
                             .and_then(|mut guard| guard.as_mut().map(|e| e.collect()));
 
                         if let Some(snap) = snap_opt {
-                            loop_tick = loop_tick.wrapping_add(1);
                             let snap_arc = Arc::new(snap);
                             if let Ok(mut lat) = bg_latest.lock() {
                                 *lat = Some(Arc::clone(&snap_arc));
@@ -1079,43 +1106,41 @@ pub fn run() {
                                 let _ = handle.emit("rule-alert", &alert);
                             }
 
-                            // Update system tray tooltip & live 16x16 CPU chart icon every 2 ticks (also while in tray/idle)
-                            if loop_tick % 2 == 1 {
-                                let tooltip = format!(
-                                    "Spektr Taskmanager — CPU {:.0}% | RAM {:.0}% | GPU {:.0}%",
-                                    snap_arc.cpu.total_usage,
-                                    snap_arc.memory.usage_percent,
-                                    snap_arc.gpu.usage_percent.unwrap_or(0.0),
-                                );
-                                if tooltip != last_tooltip {
+                            // Update system tray tooltip & live 16x16 CPU chart icon at the configured rate
+                            let tooltip = format!(
+                                "Spektr Taskmanager — CPU {:.0}% | RAM {:.0}% | GPU {:.0}%",
+                                snap_arc.cpu.total_usage,
+                                snap_arc.memory.usage_percent,
+                                snap_arc.gpu.usage_percent.unwrap_or(0.0),
+                            );
+                            if tooltip != last_tooltip {
+                                if let Some(tray) = handle.tray_by_id("main-tray") {
+                                    let _ = tray.set_tooltip(Some(tooltip.as_str()));
+                                    last_tooltip = tooltip;
+                                }
+                            }
+
+                            tray_cpu_hist.rotate_left(1);
+                            tray_cpu_hist[13] =
+                                tray_icon::quantize_cpu_bar(snap_arc.cpu.total_usage);
+
+                            if bg_tray_cpu_icon.load(Ordering::Relaxed) {
+                                let bucket =
+                                    tray_icon::cpu_color_bucket(snap_arc.cpu.total_usage);
+                                let state_key = (tray_cpu_hist, bucket);
+                                if last_tray_icon_state != Some(state_key) {
                                     if let Some(tray) = handle.tray_by_id("main-tray") {
-                                        let _ = tray.set_tooltip(Some(tooltip.as_str()));
-                                        last_tooltip = tooltip;
+                                        let rgba = tray_icon::render_cpu_tray_icon(
+                                            &tray_cpu_hist,
+                                            snap_arc.cpu.total_usage,
+                                        );
+                                        let img = tauri::image::Image::new_owned(rgba, 16, 16);
+                                        let _ = tray.set_icon(Some(img));
+                                        last_tray_icon_state = Some(state_key);
                                     }
                                 }
-
-                                tray_cpu_hist.rotate_left(1);
-                                tray_cpu_hist[13] =
-                                    tray_icon::quantize_cpu_bar(snap_arc.cpu.total_usage);
-
-                                if bg_tray_cpu_icon.load(Ordering::Relaxed) {
-                                    let bucket =
-                                        tray_icon::cpu_color_bucket(snap_arc.cpu.total_usage);
-                                    let state_key = (tray_cpu_hist, bucket);
-                                    if last_tray_icon_state != Some(state_key) {
-                                        if let Some(tray) = handle.tray_by_id("main-tray") {
-                                            let rgba = tray_icon::render_cpu_tray_icon(
-                                                &tray_cpu_hist,
-                                                snap_arc.cpu.total_usage,
-                                            );
-                                            let img = tauri::image::Image::new_owned(rgba, 16, 16);
-                                            let _ = tray.set_icon(Some(img));
-                                            last_tray_icon_state = Some(state_key);
-                                        }
-                                    }
-                                } else {
-                                    last_tray_icon_state = None;
-                                }
+                            } else {
+                                last_tray_icon_state = None;
                             }
 
                             let (ui_vis_now, mini_hud_now) = bg_ui_state
@@ -1221,6 +1246,7 @@ pub fn run() {
                 }
             }
             tauri::RunEvent::Exit => {
+                app_handle.state::<AppState>().single_instance.release();
                 net_etw::stop_session_by_name();
             }
             _ => {}
