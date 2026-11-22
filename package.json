@@ -2,6 +2,17 @@
   "name": "spektr-taskmanager",
   "private": true,
   "version": "0.3.0",
+  "description": "Fast, lightweight, and visually refined Windows Task Manager & system monitor",
+  "license": "MIT",
+  "author": "CrimsonEagle",
+  "homepage": "https://github.com/CrimsonEagle/spektr-taskmanager#readme",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/CrimsonEagle/spektr-taskmanager.git"
+  },
+  "bugs": {
+    "url": "https://github.com/CrimsonEagle/spektr-taskmanager/issues"
+  },
   "type": "module",
   "scripts": {
     "dev": "vite",

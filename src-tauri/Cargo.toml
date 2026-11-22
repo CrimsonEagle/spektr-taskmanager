@@ -1,8 +1,11 @@
 [package]
 name = "spektr-taskmanager"
 version = "0.3.0"
-description = "Spektr Taskmanager — Moderner Windows Task-Manager"
-authors = ["Marco"]
+description = "Spektr Taskmanager — Modern Windows Task Manager"
+authors = ["CrimsonEagle"]
+license = "MIT"
+repository = "https://github.com/CrimsonEagle/spektr-taskmanager"
+readme = "../README.md"
 edition = "2021"
 
 [build-dependencies]

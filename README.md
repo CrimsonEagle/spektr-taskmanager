@@ -1,10 +1,39 @@
 # Spektr Taskmanager — Modern Windows Task Manager
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Platform](https://img.shields.io/badge/Platform-Windows%2010%20%2F%2011%20(x64)-0078D6.svg)](https://github.com/CrimsonEagle/spektr-taskmanager/releases)
+[![Tauri v2](https://img.shields.io/badge/Tauri-v2-24C8DB.svg)](https://v2.tauri.app/)
+[![Rust](https://img.shields.io/badge/Backend-Rust-orange.svg)](https://www.rust-lang.org/)
+
 **Spektr Taskmanager** is a fast, lightweight, and visually refined Task Manager & system monitor for Windows 10/11 built with **Tauri v2**, **Rust**, **React 19**, **TypeScript**, **Tailwind CSS v4**, **Framer Motion**, and **Phosphor Duotone Icons**.
 
 Designed to deliver power-user insight without visual clutter, Spektr pairs native Windows kernel telemetry with a system-aligned Fluent UI (automatic Light & Dark Mode), semantic spectral color coding, and smooth 60 fps animations — all packed into a ~1.5 MB native Windows installer.
 
 > **Current Version:** `v0.3.0`
+
+<!--
+## Screenshots
+Add screenshots in `docs/screenshots/` and embed them here, e.g.:
+![Spektr Overview](docs/screenshots/overview-dark.png)
+-->
+
+---
+
+## Download & Installation
+
+Pre-built binaries are published on the [**GitHub Releases**](https://github.com/CrimsonEagle/spektr-taskmanager/releases) page:
+- **Setup Installer (`*-setup.exe`)** — Recommended for most users
+- **MSI Package (`*.msi`)** — Standard Windows Installer
+- **Portable (`*-portable.exe`)** — Standalone executable, no installation required
+
+> **Windows SmartScreen Notice:** Because Spektr Taskmanager is an open-source project without a paid code-signing certificate, Windows Defender SmartScreen may show a warning on first launch. All release binaries are built reproducibly via [GitHub Actions](.github/workflows/release.yml) and accompanied by `SHA256SUMS.txt`. Click **More info → Run anyway** or build from source below.
+
+### Administrator Privileges
+Spektr works out of the box as a **standard user**. Elevating to **Administrator** (via Settings or UAC prompt) is optional and unlocks:
+- Starting, stopping, and restarting Windows Services
+- Per-process live ETW network throughput telemetry
+- Inspecting and controlling elevated / system processes
+- Managing system-wide (`HKLM`) startup entries
 
 ---
 
@@ -124,3 +153,23 @@ After running `pnpm tauri build`, you will find:
 - **Windows Setup Installer (recommended):** `src-tauri/target/release/bundle/nsis/Spektr Taskmanager_<version>_x64-setup.exe`
 - **Windows MSI Installer:** `src-tauri/target/release/bundle/msi/Spektr Taskmanager_<version>_x64_en-US.msi`
 - **Standalone Portable Executable:** `src-tauri/target/release/spektr-taskmanager.exe`
+
+---
+
+## Privacy & Security
+
+- **100% Local:** No analytics, no telemetry, no background network calls, and no accounts.
+- **No Kernel Drivers:** Uses standard Windows user-mode APIs only — no bundled third-party kernel drivers.
+- To report a security issue privately, see [SECURITY.md](SECURITY.md).
+
+## Contributing
+
+Bug reports, hardware telemetry feedback, translations, and pull requests are welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for setup and guidelines.
+
+## Disclaimer
+
+Spektr Taskmanager can terminate processes, modify process priorities, stop Windows services, and toggle startup entries. Use elevated and destructive controls responsibly — the software is provided *"as is"*, without warranty of any kind.
+
+## License
+
+Licensed under the [MIT License](LICENSE). Copyright © 2026 CrimsonEagle.

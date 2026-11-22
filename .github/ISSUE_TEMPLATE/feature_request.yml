@@ -1,0 +1,28 @@
+name: Feature Request
+description: Suggest a new feature or improvement for Spektr Taskmanager
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or Use Case
+      description: What workflow or limitation would this feature improve?
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed Solution
+      description: Describe how you envision this feature working.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives / Additional Context
+      description: Any screenshots, mockups, or comparable tools for reference.
+    validations:
+      required: false
