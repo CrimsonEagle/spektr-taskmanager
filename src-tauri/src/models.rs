@@ -410,4 +410,14 @@ pub struct AutostartConfig {
     pub enabled: bool,
     /// "normal" | "maximized" | "minimized"
     pub mode: String,
+    /// true when registered via Windows Task Scheduler with HighestAvailable (no UAC prompt at logon)
+    #[serde(default)]
+    pub elevated: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AdminPreferenceResult {
+    pub always_run_as_admin: bool,
+    pub autostart: AutostartConfig,
 }

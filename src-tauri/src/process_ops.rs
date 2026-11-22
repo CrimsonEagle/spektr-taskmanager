@@ -408,6 +408,11 @@ pub fn is_elevated() -> bool {
 
 #[cfg(windows)]
 pub fn restart_as_admin() -> Result<(), String> {
+    restart_as_admin_with_args(&["--elevated-handoff".to_string()])
+}
+
+#[cfg(windows)]
+pub fn restart_as_admin_with_args(args: &[String]) -> Result<(), String> {
     use windows::core::{w, PCWSTR};
     use windows::Win32::UI::Shell::ShellExecuteW;
     use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
@@ -417,12 +422,29 @@ pub fn restart_as_admin() -> Result<(), String> {
     let exe_str = exe.to_string_lossy();
     let wide_exe: Vec<u16> = exe_str.encode_utf16().chain(std::iter::once(0)).collect();
 
+    let params = args
+        .iter()
+        .map(|a| {
+            if a.contains(' ') || a.contains('"') {
+                format!("\"{}\"", a.replace('"', "\\\""))
+            } else {
+                a.clone()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+    let wide_params: Vec<u16> = params.encode_utf16().chain(std::iter::once(0)).collect();
+
     unsafe {
         let res = ShellExecuteW(
             None,
             w!("runas"),
             PCWSTR(wide_exe.as_ptr()),
-            w!("--elevated-handoff"),
+            if params.is_empty() {
+                PCWSTR::null()
+            } else {
+                PCWSTR(wide_params.as_ptr())
+            },
             PCWSTR::null(),
             SW_SHOWNORMAL,
         );
@@ -436,6 +458,11 @@ pub fn restart_as_admin() -> Result<(), String> {
 
 #[cfg(not(windows))]
 pub fn restart_as_admin() -> Result<(), String> {
+    Err("Nur unter Windows unterstützt.".into())
+}
+
+#[cfg(not(windows))]
+pub fn restart_as_admin_with_args(_args: &[String]) -> Result<(), String> {
     Err("Nur unter Windows unterstützt.".into())
 }
 

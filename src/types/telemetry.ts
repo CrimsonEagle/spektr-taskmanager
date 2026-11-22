@@ -337,4 +337,10 @@ export type AutostartMode = "normal" | "maximized" | "minimized";
 export interface AutostartConfig {
   enabled: boolean;
   mode: AutostartMode;
+  elevated: boolean;
+}
+
+export interface AdminPreferenceResult {
+  alwaysRunAsAdmin: boolean;
+  autostart: AutostartConfig;
 }

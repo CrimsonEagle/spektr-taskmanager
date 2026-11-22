@@ -144,6 +144,15 @@ body,
   scrollbar-gutter: stable;
 }
 
+.no-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
 /* Custom sleek scrollbars */
 ::-webkit-scrollbar {
   width: 8px;

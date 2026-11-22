@@ -5,6 +5,8 @@ import {
   Globe,
   Monitor,
   Moon,
+  Shield,
+  ShieldCheck,
   Sun,
   X,
 } from "@phosphor-icons/react";
@@ -27,11 +29,14 @@ interface SettingsModalProps {
   settings: AppSettings;
   themePreference: ThemePreference;
   languagePreference: LanguagePreference;
+  isElevated: boolean | null;
+  onRestartAsAdmin: () => void;
   onSetTheme: (pref: ThemePreference) => void;
   onSetLanguage: (pref: LanguagePreference) => void;
   onSetRefreshMs: (ms: RefreshRateMs) => void;
   onSetCloseToTray: (enabled: boolean) => void;
   onSetMinimizeToTrayOnMinimize: (enabled: boolean) => void;
+  onSetReleaseWebViewOnMinimize: (enabled: boolean) => void;
   onSetTrayCpuIcon: (enabled: boolean) => void;
   onToggleTitleBarMetric: (key: keyof TitleBarMetricsConfig) => void;
   onToggleHudMetric: (key: keyof HudMetricsConfig) => void;
@@ -50,14 +55,16 @@ const ToggleSwitch: React.FC<{
   checked: boolean;
   onChange: () => void;
   label: string;
-}> = ({ checked, onChange, label }) => (
+  disabled?: boolean;
+}> = ({ checked, onChange, label, disabled }) => (
   <button
     type="button"
     role="switch"
     aria-checked={checked}
     aria-label={label}
+    disabled={disabled}
     onClick={onChange}
-    className="w-9 h-5 rounded-full p-0.5 transition-colors cursor-pointer flex items-center shrink-0"
+    className="w-9 h-5 rounded-full p-0.5 transition-colors cursor-pointer flex items-center shrink-0 disabled:opacity-50 disabled:cursor-wait"
     style={{
       backgroundColor: checked ? "var(--accent-cpu)" : "var(--border-strong)",
       justifyContent: checked ? "flex-end" : "flex-start",
@@ -72,11 +79,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = React.memo(
     settings,
     themePreference,
     languagePreference,
+    isElevated,
+    onRestartAsAdmin,
     onSetTheme,
     onSetLanguage,
     onSetRefreshMs,
     onSetCloseToTray,
     onSetMinimizeToTrayOnMinimize,
+    onSetReleaseWebViewOnMinimize,
     onSetTrayCpuIcon,
     onToggleTitleBarMetric,
     onToggleHudMetric,
@@ -87,7 +97,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = React.memo(
     const [autostartEnabled, setAutostartEnabled] = useState(false);
     const [autostartMode, setAutostartMode] =
       useState<AutostartMode>("minimized");
+    const [autostartElevated, setAutostartElevated] = useState(false);
     const [autostartBusy, setAutostartBusy] = useState(false);
+    const [alwaysRunAsAdmin, setAlwaysRunAsAdmin] = useState(false);
+    const [adminBusy, setAdminBusy] = useState(false);
 
     const autostartModes: { id: AutostartMode; label: string }[] = [
       { id: "normal", label: t("settings.autostart.mode.normal") },
@@ -116,11 +129,15 @@ export const SettingsModal: React.FC<SettingsModalProps> = React.memo(
 
     useEffect(() => {
       let active = true;
-      api
-        .getAutostartConfig()
-        .then((cfg) => {
-          if (!active) return;
+      Promise.all([
+        api.getAutostartConfig().catch(() => null),
+        api.getAlwaysRunAsAdmin().catch(() => false),
+      ]).then(([cfg, adminPref]) => {
+        if (!active) return;
+        setAlwaysRunAsAdmin(Boolean(adminPref));
+        if (cfg) {
           setAutostartEnabled(cfg.enabled);
+          setAutostartElevated(Boolean(cfg.elevated));
           if (
             cfg.mode === "normal" ||
             cfg.mode === "maximized" ||
@@ -128,8 +145,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = React.memo(
           ) {
             setAutostartMode(cfg.mode);
           }
-        })
-        .catch(() => {});
+        }
+      });
       return () => {
         active = false;
       };
@@ -139,12 +156,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = React.memo(
       nextEnabled: boolean,
       nextMode: AutostartMode
     ) => {
-      if (autostartBusy) return;
+      if (autostartBusy || adminBusy) return;
       setAutostartBusy(true);
       try {
         const saved = await api.setAutostartConfig(nextEnabled, nextMode);
         setAutostartEnabled(saved.enabled);
         setAutostartMode(saved.mode);
+        setAutostartElevated(Boolean(saved.elevated));
         const modeLabel =
           saved.mode === "maximized"
             ? t("settings.autostart.mode.maximized")
@@ -154,7 +172,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = React.memo(
         onActionFeedback?.({
           ok: true,
           message: saved.enabled
-            ? t("settings.autostart.enabledToast", { mode: modeLabel })
+            ? saved.elevated
+              ? t("settings.autostart.enabledAdminToast", { mode: modeLabel })
+              : t("settings.autostart.enabledToast", { mode: modeLabel })
             : t("settings.autostart.disabledToast"),
         });
       } catch (err) {
@@ -164,6 +184,39 @@ export const SettingsModal: React.FC<SettingsModalProps> = React.memo(
         });
       } finally {
         setAutostartBusy(false);
+      }
+    };
+
+    const handleToggleAlwaysAdmin = async () => {
+      if (adminBusy || autostartBusy) return;
+      const next = !alwaysRunAsAdmin;
+      const wasAutostartEnabled = autostartEnabled;
+      setAdminBusy(true);
+      try {
+        const res = await api.setAlwaysRunAsAdmin(next);
+        setAlwaysRunAsAdmin(res.alwaysRunAsAdmin);
+        setAutostartEnabled(res.autostart.enabled);
+        setAutostartMode(res.autostart.mode);
+        setAutostartElevated(Boolean(res.autostart.elevated));
+
+        const migrated = wasAutostartEnabled && res.autostart.enabled;
+        onActionFeedback?.({
+          ok: true,
+          message: res.alwaysRunAsAdmin
+            ? migrated
+              ? t("settings.admin.enabledMigratedToast")
+              : t("settings.admin.enabledToast")
+            : migrated
+              ? t("settings.admin.disabledMigratedToast")
+              : t("settings.admin.disabledToast"),
+        });
+      } catch (err) {
+        onActionFeedback?.({
+          ok: false,
+          message: t("settings.admin.errorToast", { err: String(err) }),
+        });
+      } finally {
+        setAdminBusy(false);
       }
     };
 
@@ -288,6 +341,84 @@ export const SettingsModal: React.FC<SettingsModalProps> = React.memo(
                 </div>
               </div>
 
+              {/* Always Start as Administrator */}
+              <div
+                className="p-3 rounded-xl border flex flex-col gap-2.5"
+                style={{
+                  backgroundColor: "var(--bg-subtle)",
+                  borderColor: "var(--border-subtle)",
+                }}
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <div className="font-semibold flex items-center gap-1.5">
+                      {isElevated ? (
+                        <ShieldCheck
+                          className="w-3.5 h-3.5 shrink-0"
+                          style={{ color: "var(--accent-gpu)" }}
+                        />
+                      ) : (
+                        <Shield
+                          className="w-3.5 h-3.5 shrink-0"
+                          style={{ color: "var(--accent-cpu)" }}
+                        />
+                      )}
+                      <span>{t("settings.admin.title")}</span>
+                    </div>
+                    <div
+                      className="text-[11px] mt-0.5"
+                      style={{ color: "var(--text-muted)" }}
+                    >
+                      {t("settings.admin.desc")}
+                    </div>
+                  </div>
+                  <ToggleSwitch
+                    checked={alwaysRunAsAdmin}
+                    disabled={adminBusy || autostartBusy}
+                    onChange={handleToggleAlwaysAdmin}
+                    label={t("settings.admin.title")}
+                  />
+                </div>
+
+                {isElevated !== null && (
+                  <div
+                    className="flex items-center justify-between gap-2 pt-2 border-t text-[11px]"
+                    style={{ borderColor: "var(--border-subtle)" }}
+                  >
+                    <span
+                      className="inline-flex items-center gap-1.5 font-medium"
+                      style={{
+                        color: isElevated
+                          ? "var(--accent-gpu)"
+                          : "var(--text-muted)",
+                      }}
+                    >
+                      {isElevated ? (
+                        <ShieldCheck className="w-3.5 h-3.5 shrink-0" />
+                      ) : (
+                        <Shield className="w-3.5 h-3.5 shrink-0" />
+                      )}
+                      {isElevated
+                        ? t("settings.admin.activeStatus")
+                        : t("settings.admin.inactiveStatus")}
+                    </span>
+                    {!isElevated && (
+                      <button
+                        type="button"
+                        onClick={onRestartAsAdmin}
+                        className="px-2 py-1 rounded-md text-[11px] font-semibold cursor-pointer transition-opacity hover:opacity-85 shrink-0"
+                        style={{
+                          backgroundColor: "var(--accent-cpu-soft)",
+                          color: "var(--accent-cpu)",
+                        }}
+                      >
+                        {t("settings.admin.restartNow")}
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+
               {/* Windows Autostart & Start Mode */}
               <div
                 className="p-3 rounded-xl border flex flex-col gap-2.5"
@@ -310,6 +441,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = React.memo(
                   </div>
                   <ToggleSwitch
                     checked={autostartEnabled}
+                    disabled={autostartBusy || adminBusy}
                     onChange={() =>
                       updateAutostart(!autostartEnabled, autostartMode)
                     }
@@ -342,7 +474,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = React.memo(
                         <button
                           key={m.id}
                           type="button"
-                          disabled={autostartBusy}
+                          disabled={autostartBusy || adminBusy}
                           onClick={() => handleSelectAutostartMode(m.id)}
                           className="px-2 py-1 rounded-md text-[11px] font-semibold cursor-pointer transition-colors disabled:opacity-50"
                           style={{
@@ -360,6 +492,31 @@ export const SettingsModal: React.FC<SettingsModalProps> = React.memo(
                     })}
                   </div>
                 </div>
+
+                {autostartEnabled && autostartElevated && (
+                  <div
+                    className="flex items-center gap-1.5 text-[11px] font-medium pt-1.5 border-t"
+                    style={{
+                      borderColor: "var(--border-subtle)",
+                      color: "var(--accent-gpu)",
+                    }}
+                  >
+                    <ShieldCheck className="w-3.5 h-3.5 shrink-0" />
+                    <span>{t("settings.autostart.elevatedBadge")}</span>
+                  </div>
+                )}
+
+                {!autostartEnabled && alwaysRunAsAdmin && (
+                  <div
+                    className="text-[11px] pt-1.5 border-t"
+                    style={{
+                      borderColor: "var(--border-subtle)",
+                      color: "var(--text-muted)",
+                    }}
+                  >
+                    {t("settings.autostart.elevatedHint")}
+                  </div>
+                )}
               </div>
 
               {/* Minimize to Tray (Zero-WebView RAM saving) */}
@@ -423,6 +580,38 @@ export const SettingsModal: React.FC<SettingsModalProps> = React.memo(
                       )
                     }
                     label={t("settings.tray.onMinimizeAria")}
+                  />
+                </div>
+
+                <div
+                  className={`flex items-center justify-between gap-3 pt-2 border-t transition-opacity ${
+                    settings.minimizeToTrayOnMinimize ? "opacity-55" : "opacity-100"
+                  }`}
+                  style={{ borderColor: "var(--border-subtle)" }}
+                >
+                  <div>
+                    <div className="font-medium">
+                      {t("settings.tray.releaseWebViewOnMinimize")}
+                    </div>
+                    <div
+                      className="text-[11px]"
+                      style={{ color: "var(--text-muted)" }}
+                    >
+                      {t("settings.tray.releaseWebViewOnMinimizeDesc")}
+                    </div>
+                  </div>
+                  <ToggleSwitch
+                    checked={
+                      settings.minimizeToTrayOnMinimize ||
+                      settings.releaseWebViewOnMinimize
+                    }
+                    disabled={settings.minimizeToTrayOnMinimize}
+                    onChange={() =>
+                      onSetReleaseWebViewOnMinimize(
+                        !settings.releaseWebViewOnMinimize
+                      )
+                    }
+                    label={t("settings.tray.releaseWebViewOnMinimizeAria")}
                   />
                 </div>
               </div>

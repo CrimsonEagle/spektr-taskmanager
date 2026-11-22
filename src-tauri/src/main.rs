@@ -13,14 +13,15 @@ mod process_ops;
 mod rules;
 mod single_instance;
 mod startup_services;
+mod taskbar_placeholder;
 mod telemetry;
 mod tray_icon;
 mod win_cpu;
 
 use models::{
-    ActionResult, AutostartConfig, FileLockEntry, HistoryPoint, NetworkConnectionEntry,
-    ProcessAffinityInfo, ProcessEnvInfo, ProcessModulesThreads, ProcessRule, ProcessSecurityInfo,
-    ServiceEntry, StartupEntry, TelemetrySnapshot,
+    ActionResult, AdminPreferenceResult, AutostartConfig, FileLockEntry, HistoryPoint,
+    NetworkConnectionEntry, ProcessAffinityInfo, ProcessEnvInfo, ProcessModulesThreads,
+    ProcessRule, ProcessSecurityInfo, ServiceEntry, StartupEntry, TelemetrySnapshot,
 };
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -51,9 +52,13 @@ struct BackendPrefs {
     #[serde(default)]
     minimize_to_tray_on_minimize: bool,
     #[serde(default = "default_true")]
+    release_webview_on_minimize: bool,
+    #[serde(default = "default_true")]
     tray_cpu_icon: bool,
     #[serde(default = "default_language")]
     language: String,
+    #[serde(default)]
+    always_run_as_admin: bool,
 }
 
 impl Default for BackendPrefs {
@@ -62,8 +67,10 @@ impl Default for BackendPrefs {
             refresh_ms: 1000,
             close_to_tray: false,
             minimize_to_tray_on_minimize: false,
+            release_webview_on_minimize: true,
             tray_cpu_icon: true,
             language: "de".to_string(),
+            always_run_as_admin: false,
         }
     }
 }
@@ -71,6 +78,21 @@ impl Default for BackendPrefs {
 fn load_backend_prefs(path: &PathBuf) -> Option<BackendPrefs> {
     let raw = std::fs::read_to_string(path).ok()?;
     serde_json::from_str::<BackendPrefs>(&raw).ok()
+}
+
+fn should_auto_elevate_from_prefs() -> bool {
+    const APP_ID: &str = "io.github.crimsoneagle.spektr-taskmanager";
+    for env_key in ["APPDATA", "LOCALAPPDATA"] {
+        if let Some(base) = std::env::var_os(env_key) {
+            let candidate = PathBuf::from(base)
+                .join(APP_ID)
+                .join("backend_prefs.json");
+            if let Some(prefs) = load_backend_prefs(&candidate) {
+                return prefs.always_run_as_admin;
+            }
+        }
+    }
+    false
 }
 
 fn save_backend_prefs(state: &AppState) {
@@ -81,12 +103,14 @@ fn save_backend_prefs(state: &AppState) {
         refresh_ms: state.refresh_ms.lock().map(|g| *g).unwrap_or(1000),
         close_to_tray: state.close_to_tray.load(Ordering::Relaxed),
         minimize_to_tray_on_minimize: state.minimize_to_tray_on_minimize.load(Ordering::Relaxed),
+        release_webview_on_minimize: state.release_webview_on_minimize.load(Ordering::Relaxed),
         tray_cpu_icon: state.tray_cpu_icon.load(Ordering::Relaxed),
         language: state
             .language
             .lock()
             .map(|g| g.clone())
             .unwrap_or_else(|_| "de".to_string()),
+        always_run_as_admin: state.always_run_as_admin.load(Ordering::Relaxed),
     };
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
@@ -96,10 +120,12 @@ fn save_backend_prefs(state: &AppState) {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct UiState {
     pub visible: bool,
     pub active_tab: String,
+    pub performance_metric: String,
     pub mini_hud: bool,
     pub palette_open: bool,
     pub inspected_pid: Option<u32>,
@@ -110,6 +136,7 @@ impl Default for UiState {
         Self {
             visible: true,
             active_tab: "overview".to_string(),
+            performance_metric: "cpu".to_string(),
             mini_hud: false,
             palette_open: false,
             inspected_pid: None,
@@ -126,14 +153,19 @@ pub struct AppState {
     pub paused: Arc<AtomicBool>,
     pub close_to_tray: Arc<AtomicBool>,
     pub minimize_to_tray_on_minimize: Arc<AtomicBool>,
+    pub release_webview_on_minimize: Arc<AtomicBool>,
     pub tray_cpu_icon: Arc<AtomicBool>,
+    pub always_run_as_admin: Arc<AtomicBool>,
     pub language: Arc<Mutex<String>>,
     pub rule_store: Arc<Mutex<rules::RuleStore>>,
     pub prefs_path: Arc<Mutex<Option<PathBuf>>>,
     pub explicit_exit: Arc<AtomicBool>,
     pub tray_parked: Arc<AtomicBool>,
+    pub taskbar_parked: Arc<AtomicBool>,
+    pub taskbar_placeholder: Arc<taskbar_placeholder::TaskbarPlaceholder>,
     pub pending_mini_hud: Arc<AtomicBool>,
     pub was_maximized: Arc<AtomicBool>,
+    pub last_window_bounds: Arc<Mutex<Option<(f64, f64, f64, f64)>>>,
     pub window_lock: Arc<Mutex<()>>,
     pub single_instance: Arc<single_instance::SingleInstanceGuard>,
 }
@@ -179,13 +211,51 @@ fn bring_window_to_front(win: &tauri::WebviewWindow) {
 #[cfg(not(windows))]
 fn bring_window_to_front(_win: &tauri::WebviewWindow) {}
 
+#[cfg(windows)]
+fn raw_webview_hwnd(win: &tauri::WebviewWindow) -> isize {
+    win.hwnd().map(|h| h.0 as isize).unwrap_or(0)
+}
+
+#[cfg(not(windows))]
+fn raw_webview_hwnd(_win: &tauri::WebviewWindow) -> isize {
+    0
+}
+
+fn capture_main_window_geometry(state: &AppState, win: &tauri::WebviewWindow) {
+    let in_mini_hud = state
+        .ui_state
+        .lock()
+        .map(|u| u.mini_hud)
+        .unwrap_or(false);
+    if in_mini_hud || win.is_minimized().unwrap_or(false) {
+        return;
+    }
+    let is_max = win.is_maximized().unwrap_or(false);
+    state.was_maximized.store(is_max, Ordering::Relaxed);
+    if !is_max {
+        let scale = win.scale_factor().unwrap_or(1.0).max(0.5);
+        if let (Ok(pos), Ok(size)) = (win.outer_position(), win.inner_size()) {
+            let x = pos.x as f64 / scale;
+            let y = pos.y as f64 / scale;
+            let w = size.width as f64 / scale;
+            let h = size.height as f64 / scale;
+            if w >= 900.0 && h >= 580.0 && x > -10_000.0 && y > -10_000.0 {
+                if let Ok(mut bounds) = state.last_window_bounds.lock() {
+                    *bounds = Some((x, y, w, h));
+                }
+            }
+        }
+    }
+}
+
 fn open_or_focus_main_window(app: &AppHandle, start_maximized: bool, open_as_mini_hud: bool) {
     let state = app.state::<AppState>();
     let _guard = state
         .window_lock
         .lock()
         .unwrap_or_else(|e| e.into_inner());
-    state.tray_parked.store(false, Ordering::Relaxed);
+    state.tray_parked.store(false, Ordering::SeqCst);
+    state.taskbar_parked.store(false, Ordering::SeqCst);
 
     if let Some(win) = app.get_webview_window("main") {
         let _ = win.unminimize();
@@ -195,6 +265,7 @@ fn open_or_focus_main_window(app: &AppHandle, start_maximized: bool, open_as_min
         if open_as_mini_hud {
             let _ = win.emit("toggle-mini-hud", ());
         }
+        state.taskbar_placeholder.close();
         if let Ok(mut ui) = state.ui_state.lock() {
             ui.visible = true;
         }
@@ -208,25 +279,31 @@ fn open_or_focus_main_window(app: &AppHandle, start_maximized: bool, open_as_min
         state.pending_mini_hud.store(false, Ordering::Relaxed);
     }
 
+    let saved_bounds = state.last_window_bounds.lock().ok().and_then(|g| *g);
+
     let mut builder = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
         .title("Spektr Taskmanager")
         .decorations(false)
         .transparent(false)
         .shadow(true)
-        .center()
         .visible(false);
 
     if open_as_mini_hud {
         builder = builder
+            .center()
             .inner_size(390.0, 240.0)
             .min_inner_size(340.0, 140.0)
             .always_on_top(true)
             .resizable(false);
     } else {
         builder = builder
-            .inner_size(1340.0, 860.0)
             .min_inner_size(960.0, 640.0)
             .resizable(true);
+        if let Some((x, y, w, h)) = saved_bounds {
+            builder = builder.position(x, y).inner_size(w, h);
+        } else {
+            builder = builder.center().inner_size(1340.0, 860.0);
+        }
     }
 
     if let Ok(win) = builder.build() {
@@ -239,6 +316,7 @@ fn open_or_focus_main_window(app: &AppHandle, start_maximized: bool, open_as_min
         let _ = win.show();
         let _ = win.set_focus();
         bring_window_to_front(&win);
+        state.taskbar_placeholder.close();
         if let Ok(mut ui) = state.ui_state.lock() {
             ui.visible = true;
             ui.mini_hud = open_as_mini_hud;
@@ -249,20 +327,96 @@ fn open_or_focus_main_window(app: &AppHandle, start_maximized: bool, open_as_min
 
 fn park_to_tray(app: &AppHandle) {
     let state = app.state::<AppState>();
-    state.tray_parked.store(true, Ordering::Relaxed);
+    let _guard = state
+        .window_lock
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    state.tray_parked.store(true, Ordering::SeqCst);
+    state.taskbar_parked.store(false, Ordering::SeqCst);
+    state.taskbar_placeholder.close();
     if let Some(win) = app.get_webview_window("main") {
-        let in_mini_hud = state
-            .ui_state
-            .lock()
-            .map(|u| u.mini_hud)
-            .unwrap_or(false);
-        if !in_mini_hud && !win.is_minimized().unwrap_or(false) {
-            state
-                .was_maximized
-                .store(win.is_maximized().unwrap_or(false), Ordering::Relaxed);
-        }
+        capture_main_window_geometry(&state, &win);
         let _ = win.close();
     }
+}
+
+/// Replaces the WebView2 main window with a zero-WebView native Win32 minimized window
+/// so the Spektr icon stays in the Windows Taskbar while all `msedgewebview2.exe`
+/// processes terminate and free their memory/CPU.
+fn park_to_taskbar(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    let _guard = state
+        .window_lock
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+
+    if !state.taskbar_parked.load(Ordering::SeqCst) {
+        return;
+    }
+
+    state.tray_parked.store(false, Ordering::SeqCst);
+
+    let source_hwnd = if let Some(win) = app.get_webview_window("main") {
+        capture_main_window_geometry(&state, &win);
+        raw_webview_hwnd(&win)
+    } else {
+        0
+    };
+
+    let restore_app = app.clone();
+    let close_app = app.clone();
+    let placeholder_ok = state.taskbar_placeholder.show(
+        "Spektr Taskmanager",
+        source_hwnd,
+        move || {
+            let app_clone = restore_app.clone();
+            std::thread::spawn(move || {
+                open_or_focus_main_window(&app_clone, false, false);
+            });
+        },
+        move || {
+            let st = close_app.state::<AppState>();
+            st.taskbar_parked.store(false, Ordering::SeqCst);
+            if st.close_to_tray.load(Ordering::Relaxed) {
+                st.tray_parked.store(true, Ordering::SeqCst);
+            } else {
+                st.explicit_exit.store(true, Ordering::SeqCst);
+                close_app.exit(0);
+            }
+        },
+    );
+
+    if !placeholder_ok {
+        // Fallback: keep main window minimized normally instead of closing it
+        state.taskbar_parked.store(false, Ordering::SeqCst);
+        if let Some(win) = app.get_webview_window("main") {
+            let _ = win.minimize();
+        }
+        return;
+    }
+
+    if let Some(win) = app.get_webview_window("main") {
+        let _ = win.close();
+    }
+
+    // Wait briefly for WebView2 window teardown so an immediate restore won't race
+    for _ in 0..40 {
+        if app.get_webview_window("main").is_none() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+}
+
+fn trigger_park_to_taskbar(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    if state.taskbar_parked.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let app_clone = app.clone();
+    std::thread::spawn(move || {
+        park_to_taskbar(&app_clone);
+    });
 }
 
 fn trigger_wake(wake_signal: &(Mutex<u64>, Condvar)) {
@@ -283,10 +437,20 @@ fn get_snapshot(state: State<'_, AppState>) -> Option<TelemetrySnapshot> {
 }
 
 #[tauri::command]
+fn get_ui_state(state: State<'_, AppState>) -> UiState {
+    state
+        .ui_state
+        .lock()
+        .map(|g| g.clone())
+        .unwrap_or_default()
+}
+
+#[tauri::command]
 fn set_ui_state(
     state: State<'_, AppState>,
     visible: bool,
     active_tab: String,
+    performance_metric: Option<String>,
     mini_hud: bool,
     palette_open: bool,
     inspected_pid: Option<u32>,
@@ -301,6 +465,9 @@ fn set_ui_state(
         let hud_changed = guard.mini_hud != mini_hud;
         guard.visible = visible;
         guard.active_tab = active_tab;
+        if let Some(metric) = performance_metric {
+            guard.performance_metric = metric;
+        }
         guard.mini_hud = mini_hud;
         guard.palette_open = palette_open;
         guard.inspected_pid = inspected_pid;
@@ -479,13 +646,58 @@ fn toggle_startup_entry(name: String, registry_subkey: String, enable: bool) -> 
 }
 
 #[tauri::command]
-fn get_autostart_config() -> AutostartConfig {
-    startup_services::get_autostart_config()
+async fn get_autostart_config() -> AutostartConfig {
+    tauri::async_runtime::spawn_blocking(startup_services::get_autostart_config)
+        .await
+        .unwrap_or_else(|_| AutostartConfig {
+            enabled: false,
+            mode: "minimized".to_string(),
+            elevated: false,
+        })
 }
 
 #[tauri::command]
-fn set_autostart_config(enabled: bool, mode: String) -> Result<AutostartConfig, String> {
-    startup_services::set_autostart_config(enabled, &mode)
+async fn set_autostart_config(
+    enabled: bool,
+    mode: String,
+    state: State<'_, AppState>,
+) -> Result<AutostartConfig, String> {
+    let elevated = state.always_run_as_admin.load(Ordering::Relaxed);
+    tauri::async_runtime::spawn_blocking(move || {
+        startup_services::set_autostart_config(enabled, &mode, elevated)
+    })
+    .await
+    .map_err(|e| format!("Autostart-Task fehlgeschlagen: {e}"))?
+}
+
+#[tauri::command]
+fn get_always_run_as_admin(state: State<'_, AppState>) -> bool {
+    state.always_run_as_admin.load(Ordering::Relaxed)
+}
+
+#[tauri::command]
+async fn set_always_run_as_admin(
+    enabled: bool,
+    state: State<'_, AppState>,
+) -> Result<AdminPreferenceResult, String> {
+    let autostart = tauri::async_runtime::spawn_blocking(move || {
+        let current = startup_services::get_autostart_config();
+        if current.enabled && current.elevated != enabled {
+            startup_services::set_autostart_config(true, &current.mode, enabled)
+        } else {
+            Ok(current)
+        }
+    })
+    .await
+    .map_err(|e| format!("Admin-Einstellung fehlgeschlagen: {e}"))??;
+
+    state.always_run_as_admin.store(enabled, Ordering::Relaxed);
+    save_backend_prefs(&state);
+
+    Ok(AdminPreferenceResult {
+        always_run_as_admin: enabled,
+        autostart,
+    })
 }
 
 #[tauri::command]
@@ -507,19 +719,35 @@ fn set_tray_behavior(
     state: State<'_, AppState>,
     close_to_tray: bool,
     minimize_to_tray: bool,
+    release_webview_on_minimize: Option<bool>,
 ) -> Result<(), String> {
     state.close_to_tray.store(close_to_tray, Ordering::Relaxed);
     state
         .minimize_to_tray_on_minimize
         .store(minimize_to_tray, Ordering::Relaxed);
+    if let Some(rel) = release_webview_on_minimize {
+        state
+            .release_webview_on_minimize
+            .store(rel, Ordering::Relaxed);
+    }
     save_backend_prefs(&state);
     Ok(())
 }
 
 #[tauri::command]
 fn minimize_window(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
-    if state.minimize_to_tray_on_minimize.load(Ordering::Relaxed) {
-        park_to_tray(&app);
+    let in_mini_hud = state
+        .ui_state
+        .lock()
+        .map(|u| u.mini_hud)
+        .unwrap_or(false);
+    if !in_mini_hud && state.minimize_to_tray_on_minimize.load(Ordering::Relaxed) {
+        let app_clone = app.clone();
+        std::thread::spawn(move || {
+            park_to_tray(&app_clone);
+        });
+    } else if !in_mini_hud && state.release_webview_on_minimize.load(Ordering::Relaxed) {
+        trigger_park_to_taskbar(&app);
     } else if let Some(win) = app.get_webview_window("main") {
         let _ = win.minimize();
     }
@@ -801,7 +1029,10 @@ fn setup_tray(app: &AppHandle, lang: &str) -> tauri::Result<()> {
                 });
             }
             "park" => {
-                park_to_tray(app);
+                let app_clone = app.clone();
+                std::thread::spawn(move || {
+                    park_to_tray(&app_clone);
+                });
             }
             "quit" => {
                 app.state::<AppState>()
@@ -839,6 +1070,7 @@ fn main() {
     // signal it to open/focus its window and exit immediately.
     let cli_args: Vec<String> = std::env::args().collect();
     let is_elevated_handoff = cli_args.iter().any(|a| a == "--elevated-handoff");
+    let no_auto_elevate = cli_args.iter().any(|a| a == "--no-auto-elevate");
     let launch_minimized = cli_args
         .iter()
         .any(|a| a == "--start-minimized" || a == "--minimized" || a == "--tray");
@@ -846,6 +1078,30 @@ fn main() {
         single_instance::AcquireResult::Primary(guard) => Arc::new(guard),
         single_instance::AcquireResult::AlreadyRunning => return,
     };
+
+    // If "Always run as Administrator" is enabled and this launch is non-elevated
+    // (e.g. manual start from Start Menu / desktop), seamlessly hand off to an elevated instance
+    // before spawning Tauri / WebView2. Elevated autostart via Task Scheduler already starts
+    // elevated (`is_elevated() == true`) with zero UAC prompt.
+    if !process_ops::is_elevated()
+        && !is_elevated_handoff
+        && !no_auto_elevate
+        && should_auto_elevate_from_prefs()
+    {
+        let mut forward_args: Vec<String> = cli_args
+            .iter()
+            .skip(1)
+            .filter(|a| *a != "--elevated-handoff" && *a != "--no-auto-elevate")
+            .cloned()
+            .collect();
+        forward_args.push("--elevated-handoff".to_string());
+        forward_args.push("--no-auto-elevate".to_string());
+
+        if process_ops::restart_as_admin_with_args(&forward_args).is_ok() {
+            single_instance.release();
+            return;
+        }
+    }
 
     // Keep the main UI thread 100% free of MTA COM/WMI/DXGI calls so Tauri's OleInitialize (STA) succeeds.
     let engine: Arc<Mutex<Option<TelemetryEngine>>> = Arc::new(Mutex::new(None));
@@ -856,14 +1112,19 @@ fn main() {
     let paused = Arc::new(AtomicBool::new(false));
     let close_to_tray = Arc::new(AtomicBool::new(false));
     let minimize_to_tray_on_minimize = Arc::new(AtomicBool::new(false));
+    let release_webview_on_minimize = Arc::new(AtomicBool::new(true));
     let tray_cpu_icon = Arc::new(AtomicBool::new(true));
+    let always_run_as_admin = Arc::new(AtomicBool::new(false));
     let language = Arc::new(Mutex::new("de".to_string()));
     let rule_store = Arc::new(Mutex::new(rules::RuleStore::load(None)));
     let prefs_path: Arc<Mutex<Option<PathBuf>>> = Arc::new(Mutex::new(None));
     let explicit_exit = Arc::new(AtomicBool::new(false));
     let tray_parked = Arc::new(AtomicBool::new(false));
+    let taskbar_parked = Arc::new(AtomicBool::new(false));
+    let taskbar_placeholder = Arc::new(taskbar_placeholder::TaskbarPlaceholder::new());
     let pending_mini_hud = Arc::new(AtomicBool::new(false));
     let was_maximized = Arc::new(AtomicBool::new(false));
+    let last_window_bounds: Arc<Mutex<Option<(f64, f64, f64, f64)>>> = Arc::new(Mutex::new(None));
     let window_lock = Arc::new(Mutex::new(()));
 
     let bg_engine = Arc::clone(&engine);
@@ -880,7 +1141,9 @@ fn main() {
     let setup_refresh = Arc::clone(&refresh_ms);
     let setup_close_to_tray = Arc::clone(&close_to_tray);
     let setup_minimize_to_tray_on_minimize = Arc::clone(&minimize_to_tray_on_minimize);
+    let setup_release_webview_on_minimize = Arc::clone(&release_webview_on_minimize);
     let setup_tray_cpu_icon = Arc::clone(&tray_cpu_icon);
+    let setup_always_run_as_admin = Arc::clone(&always_run_as_admin);
     let setup_language = Arc::clone(&language);
     let setup_single_instance = Arc::clone(&single_instance);
 
@@ -895,14 +1158,19 @@ fn main() {
             paused,
             close_to_tray,
             minimize_to_tray_on_minimize,
+            release_webview_on_minimize,
             tray_cpu_icon,
+            always_run_as_admin,
             language,
             rule_store,
             prefs_path,
             explicit_exit,
             tray_parked,
+            taskbar_parked,
+            taskbar_placeholder,
             pending_mini_hud,
             was_maximized,
+            last_window_bounds,
             window_lock,
             single_instance,
         })
@@ -910,44 +1178,46 @@ fn main() {
             if window.label() == "main" {
                 let state = window.state::<AppState>();
                 match event {
-                    tauri::WindowEvent::Resized(_) => {
-                        let is_minimized = window.is_minimized().unwrap_or(false);
-                        if is_minimized {
-                            if state.minimize_to_tray_on_minimize.load(Ordering::Relaxed)
-                                && !state.tray_parked.swap(true, Ordering::Relaxed)
-                            {
-                                let app_clone = window.app_handle().clone();
-                                std::thread::spawn(move || {
-                                    park_to_tray(&app_clone);
-                                });
-                            }
-                        } else {
-                            let in_mini_hud = state
-                                .ui_state
-                                .lock()
-                                .map(|u| u.mini_hud)
-                                .unwrap_or(false);
-                            if !in_mini_hud && window.is_visible().unwrap_or(false) {
-                                state.was_maximized.store(
-                                    window.is_maximized().unwrap_or(false),
-                                    Ordering::Relaxed,
-                                );
-                            }
+                    tauri::WindowEvent::Moved(_) => {
+                        if let Some(wv) = window.app_handle().get_webview_window("main") {
+                            capture_main_window_geometry(&state, &wv);
                         }
                     }
-                    tauri::WindowEvent::CloseRequested { .. } => {
+                    tauri::WindowEvent::Resized(_) => {
+                        let is_minimized = window.is_minimized().unwrap_or(false);
                         let in_mini_hud = state
                             .ui_state
                             .lock()
                             .map(|u| u.mini_hud)
                             .unwrap_or(false);
-                        if !in_mini_hud && !window.is_minimized().unwrap_or(false) {
-                            state
-                                .was_maximized
-                                .store(window.is_maximized().unwrap_or(false), Ordering::Relaxed);
+                        if is_minimized {
+                            if !in_mini_hud {
+                                if state.minimize_to_tray_on_minimize.load(Ordering::Relaxed) {
+                                    if !state.tray_parked.swap(true, Ordering::SeqCst) {
+                                        let app_clone = window.app_handle().clone();
+                                        std::thread::spawn(move || {
+                                            park_to_tray(&app_clone);
+                                        });
+                                    }
+                                } else if state
+                                    .release_webview_on_minimize
+                                    .load(Ordering::Relaxed)
+                                {
+                                    trigger_park_to_taskbar(window.app_handle());
+                                }
+                            }
+                        } else if !in_mini_hud && window.is_visible().unwrap_or(false) {
+                            if let Some(wv) = window.app_handle().get_webview_window("main") {
+                                capture_main_window_geometry(&state, &wv);
+                            }
+                        }
+                    }
+                    tauri::WindowEvent::CloseRequested { .. } => {
+                        if let Some(wv) = window.app_handle().get_webview_window("main") {
+                            capture_main_window_geometry(&state, &wv);
                         }
                         // Allow the WebviewWindow to actually close so all msedgewebview2.exe
-                        // child processes terminate ("Zero-WebView im Tray"). Keeping the
+                        // child processes terminate ("Zero-WebView im Tray / in Taskleiste"). Keeping the
                         // background daemon alive is handled in RunEvent::ExitRequested.
                     }
                     tauri::WindowEvent::Destroyed => {
@@ -980,7 +1250,10 @@ fn main() {
                     setup_close_to_tray.store(prefs.close_to_tray, Ordering::Relaxed);
                     setup_minimize_to_tray_on_minimize
                         .store(prefs.minimize_to_tray_on_minimize, Ordering::Relaxed);
+                    setup_release_webview_on_minimize
+                        .store(prefs.release_webview_on_minimize, Ordering::Relaxed);
                     setup_tray_cpu_icon.store(prefs.tray_cpu_icon, Ordering::Relaxed);
+                    setup_always_run_as_admin.store(prefs.always_run_as_admin, Ordering::Relaxed);
                     if let Ok(mut lang_guard) = setup_language.lock() {
                         *lang_guard = if prefs.language.eq_ignore_ascii_case("en") {
                             "en".to_string()
@@ -1188,6 +1461,7 @@ fn main() {
             get_snapshot,
             get_history,
             set_refresh_interval,
+            get_ui_state,
             set_ui_state,
             set_telemetry_paused,
             set_tray_behavior,
@@ -1217,6 +1491,8 @@ fn main() {
             toggle_startup_entry,
             get_autostart_config,
             set_autostart_config,
+            get_always_run_as_admin,
+            set_always_run_as_admin,
             get_services,
             control_service,
             set_service_start_type,
@@ -1241,13 +1517,16 @@ fn main() {
                 let is_explicit =
                     code.is_some() || state.explicit_exit.load(Ordering::Relaxed);
                 let keep_alive = state.close_to_tray.load(Ordering::Relaxed)
-                    || state.tray_parked.load(Ordering::Relaxed);
+                    || state.tray_parked.load(Ordering::SeqCst)
+                    || state.taskbar_parked.load(Ordering::SeqCst);
                 if !is_explicit && keep_alive {
                     api.prevent_exit();
                 }
             }
             tauri::RunEvent::Exit => {
-                app_handle.state::<AppState>().single_instance.release();
+                let state = app_handle.state::<AppState>();
+                state.taskbar_placeholder.close();
+                state.single_instance.release();
                 net_etw::stop_session_by_name();
             }
             _ => {}

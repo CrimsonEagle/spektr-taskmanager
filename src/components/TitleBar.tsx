@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowsInSimple as Minimize2,
   ArrowsOutSimple as Maximize2,
@@ -19,6 +19,20 @@ import { formatSpeed } from "../lib/format";
 import { api } from "../lib/tauri";
 import { PerformanceMetric, TelemetrySnapshot } from "../types/telemetry";
 import { SpektrLogo } from "./SpektrLogo";
+
+type PillKey = keyof TitleBarMetricsConfig;
+
+const PILL_ORDER: PillKey[] = ["cpu", "ram", "gpu", "disk", "network"];
+const PILL_WIDTHS: Record<PillKey, number> = {
+  cpu: 78,
+  ram: 80,
+  gpu: 78,
+  disk: 114,
+  network: 116,
+};
+const PILL_GAP = 6; // gap-1.5
+// Reserve enough space for the centered Command Palette button + padding/gaps so pills never collide with it.
+const RESERVED_PALETTE_AND_CHROME = 248 + 28 + 16 + 14 + 10;
 
 interface TitleBarProps {
   snapshot: TelemetrySnapshot | null;
@@ -56,6 +70,62 @@ export const TitleBar: React.FC<TitleBarProps> = React.memo(
   }) => {
     const { t } = useI18n();
     const [isMaximized, setIsMaximized] = useState(false);
+    const headerRef = useRef<HTMLElement>(null);
+    const brandRef = useRef<HTMLDivElement>(null);
+    const rightRef = useRef<HTMLDivElement>(null);
+    const [availablePillsWidth, setAvailablePillsWidth] = useState<number>(600);
+
+    useEffect(() => {
+      const recalc = () => {
+        const headerEl = headerRef.current;
+        const brandEl = brandRef.current;
+        const rightEl = rightRef.current;
+        if (!headerEl || !brandEl || !rightEl) return;
+        const avail =
+          headerEl.clientWidth -
+          brandEl.offsetWidth -
+          rightEl.offsetWidth -
+          RESERVED_PALETTE_AND_CHROME;
+        setAvailablePillsWidth((prev) =>
+          Math.abs(prev - avail) >= 2 ? avail : prev
+        );
+      };
+
+      recalc();
+      const ro = new ResizeObserver(recalc);
+      if (headerRef.current) ro.observe(headerRef.current);
+      if (brandRef.current) ro.observe(brandRef.current);
+      if (rightRef.current) ro.observe(rightRef.current);
+      return () => ro.disconnect();
+    }, [isElevated, telemetryPaused]);
+
+    const visiblePills = useMemo(() => {
+      const shown = new Set<PillKey>();
+      if (!snapshot || availablePillsWidth <= 0) return shown;
+
+      const gpuReady = Boolean(
+        snapshot.gpu.available && snapshot.gpu.usagePercent != null
+      );
+      let used = 0;
+      for (const key of PILL_ORDER) {
+        if (!titleBarMetrics[key]) continue;
+        if (key === "gpu" && !gpuReady) continue;
+        const needed = (used > 0 ? PILL_GAP : 0) + PILL_WIDTHS[key];
+        if (used + needed <= availablePillsWidth) {
+          shown.add(key);
+          used += needed;
+        } else {
+          break;
+        }
+      }
+      return shown;
+    }, [
+      snapshot?.gpu.available,
+      snapshot?.gpu.usagePercent != null,
+      Boolean(snapshot),
+      titleBarMetrics,
+      availablePillsWidth,
+    ]);
 
     useEffect(() => {
       let mounted = true;
@@ -102,55 +172,58 @@ export const TitleBar: React.FC<TitleBarProps> = React.memo(
 
     return (
       <header
+        ref={headerRef}
         onMouseDown={handleDrag}
-        className="h-11 shrink-0 flex items-center justify-between gap-2 px-3.5 border-b select-none"
+        className="h-11 shrink-0 flex items-center justify-between gap-2 px-3.5 border-b select-none overflow-hidden"
         style={{
           backgroundColor: "var(--bg-titlebar)",
           borderColor: "var(--border-subtle)",
         }}
       >
         {/* Left: Brand & Clickable Live Telemetry Pills */}
-        <div className="flex items-center gap-2.5 min-w-0">
-          <div className="flex items-center gap-2 shrink-0">
-            <SpektrLogo size={24} className="shadow-sm" />
-            <span className="font-semibold text-sm tracking-tight">
-              Spektr Taskmanager
-            </span>
+        <div className="flex items-center gap-2.5 min-w-0 overflow-hidden">
+          <div ref={brandRef} className="flex items-center gap-2.5 shrink-0">
+            <div className="flex items-center gap-2 shrink-0">
+              <SpektrLogo size={24} className="shadow-sm" />
+              <span className="font-semibold text-sm tracking-tight whitespace-nowrap">
+                Spektr Taskmanager
+              </span>
+            </div>
+
+            {isElevated === true && (
+              <span
+                className="hidden sm:inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] font-semibold shrink-0"
+                style={{
+                  backgroundColor: "var(--accent-gpu-soft)",
+                  color: "var(--accent-gpu)",
+                  border: "1px solid rgba(16, 185, 129, 0.25)",
+                }}
+                title={t("app.adminActiveTitle")}
+              >
+                <ShieldCheck className="w-3 h-3" />
+                {t("app.admin")}
+              </span>
+            )}
+            {isElevated === false && (
+              <button
+                onClick={onRestartAsAdmin}
+                className="hidden sm:inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] font-semibold cursor-pointer transition-colors hover:bg-[var(--bg-surface-hover)] shrink-0 border"
+                style={{
+                  backgroundColor: "var(--bg-subtle)",
+                  borderColor: "var(--border-subtle)",
+                  color: "var(--text-secondary)",
+                }}
+                title={t("app.adminRestartTitle")}
+              >
+                <Shield className="w-3 h-3" />
+                {t("app.admin")}
+              </button>
+            )}
           </div>
 
-          {isElevated === true && (
-            <span
-              className="hidden sm:inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] font-semibold shrink-0"
-              style={{
-                backgroundColor: "var(--accent-gpu-soft)",
-                color: "var(--accent-gpu)",
-                border: "1px solid rgba(16, 185, 129, 0.25)",
-              }}
-              title={t("app.adminActiveTitle")}
-            >
-              <ShieldCheck className="w-3 h-3" />
-              {t("app.admin")}
-            </span>
-          )}
-          {isElevated === false && (
-            <button
-              onClick={onRestartAsAdmin}
-              className="hidden sm:inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] font-semibold cursor-pointer transition-colors hover:bg-[var(--bg-surface-hover)] shrink-0 border"
-              style={{
-                backgroundColor: "var(--bg-subtle)",
-                borderColor: "var(--border-subtle)",
-                color: "var(--text-secondary)",
-              }}
-              title={t("app.adminRestartTitle")}
-            >
-              <Shield className="w-3 h-3" />
-              {t("app.admin")}
-            </button>
-          )}
-
-          {snapshot && (
-            <div className="hidden lg:flex items-center gap-1.5 ml-1 text-[11px] font-medium tabular-nums shrink-0">
-              {titleBarMetrics.cpu && (
+          {snapshot && visiblePills.size > 0 && (
+            <div className="flex items-center gap-1.5 ml-1 text-[11px] font-medium tabular-nums shrink-0">
+              {visiblePills.has("cpu") && (
                 <button
                   onClick={() => onSelectPerformanceMetric("cpu")}
                   className="px-2 py-0.5 rounded-full flex items-center justify-between gap-1.5 w-[78px] shrink-0 whitespace-nowrap cursor-pointer transition-opacity hover:opacity-85"
@@ -170,7 +243,7 @@ export const TitleBar: React.FC<TitleBarProps> = React.memo(
                 </button>
               )}
 
-              {titleBarMetrics.ram && (
+              {visiblePills.has("ram") && (
                 <button
                   onClick={() => onSelectPerformanceMetric("memory")}
                   className="px-2 py-0.5 rounded-full flex items-center justify-between gap-1.5 w-[80px] shrink-0 whitespace-nowrap cursor-pointer transition-opacity hover:opacity-85"
@@ -190,7 +263,7 @@ export const TitleBar: React.FC<TitleBarProps> = React.memo(
                 </button>
               )}
 
-              {titleBarMetrics.gpu &&
+              {visiblePills.has("gpu") &&
                 snapshot.gpu.available &&
                 snapshot.gpu.usagePercent != null && (
                   <button
@@ -212,7 +285,7 @@ export const TitleBar: React.FC<TitleBarProps> = React.memo(
                   </button>
                 )}
 
-              {titleBarMetrics.disk && (
+              {visiblePills.has("disk") && (
                 <button
                   onClick={() => onSelectPerformanceMetric("disk")}
                   className="px-2 py-0.5 rounded-full flex items-center justify-between gap-1.5 w-[114px] shrink-0 whitespace-nowrap cursor-pointer transition-opacity hover:opacity-85"
@@ -235,7 +308,7 @@ export const TitleBar: React.FC<TitleBarProps> = React.memo(
                 </button>
               )}
 
-              {titleBarMetrics.network && (
+              {visiblePills.has("network") && (
                 <button
                   onClick={() => onSelectPerformanceMetric("network")}
                   className="px-2 py-0.5 rounded-full flex items-center justify-between gap-1.5 w-[116px] shrink-0 whitespace-nowrap cursor-pointer transition-opacity hover:opacity-85"
@@ -264,7 +337,7 @@ export const TitleBar: React.FC<TitleBarProps> = React.memo(
         {/* Center: Quick Command Palette trigger */}
         <button
           onClick={onOpenPalette}
-          className="flex items-center gap-2 px-2.5 py-1 rounded-lg text-xs border transition-colors cursor-pointer min-w-0"
+          className="flex items-center gap-2 px-2.5 py-1 rounded-lg text-xs border transition-colors cursor-pointer min-w-0 max-w-[300px]"
           style={{
             backgroundColor: "var(--bg-subtle)",
             borderColor: "var(--border-subtle)",
@@ -288,7 +361,7 @@ export const TitleBar: React.FC<TitleBarProps> = React.memo(
         </button>
 
         {/* Right: Pause, Picker, Settings, Mini-HUD & native window controls */}
-        <div className="flex items-center gap-1 shrink-0">
+        <div ref={rightRef} className="flex items-center gap-1 shrink-0">
           {/* Pause / Resume */}
           <button
             onClick={onTogglePause}

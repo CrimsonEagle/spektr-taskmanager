@@ -4,6 +4,7 @@ import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import {
   ActionResult,
+  AdminPreferenceResult,
   AutostartConfig,
   AutostartMode,
   FileLockEntry,
@@ -27,8 +28,16 @@ export const api = {
   setRefreshInterval: (ms: number) => invoke<ActionResult>("set_refresh_interval", { ms }),
   setTelemetryPaused: (paused: boolean) =>
     invoke<void>("set_telemetry_paused", { paused }),
-  setTrayBehavior: (closeToTray: boolean, minimizeToTray: boolean) =>
-    invoke<void>("set_tray_behavior", { closeToTray, minimizeToTray }),
+  setTrayBehavior: (
+    closeToTray: boolean,
+    minimizeToTray: boolean,
+    releaseWebviewOnMinimize?: boolean
+  ) =>
+    invoke<void>("set_tray_behavior", {
+      closeToTray,
+      minimizeToTray,
+      releaseWebviewOnMinimize: releaseWebviewOnMinimize ?? null,
+    }),
   minimizeWindow: () => invoke<void>("minimize_window"),
   setTrayCpuIcon: (enabled: boolean) =>
     invoke<void>("set_tray_cpu_icon", { enabled }),
@@ -37,9 +46,19 @@ export const api = {
   setMiniHud: (enabled: boolean, height?: number) =>
     invoke<void>("set_mini_hud", { enabled, height: height ?? null }),
   takePendingMiniHud: () => invoke<boolean>("take_pending_mini_hud"),
+  getUiState: () =>
+    invoke<{
+      visible: boolean;
+      activeTab: string;
+      performanceMetric: string;
+      miniHud: boolean;
+      paletteOpen: boolean;
+      inspectedPid: number | null;
+    }>("get_ui_state"),
   setUiState: (payload: {
     visible: boolean;
     activeTab: string;
+    performanceMetric?: string;
     miniHud: boolean;
     paletteOpen: boolean;
     inspectedPid: number | null;
@@ -47,6 +66,9 @@ export const api = {
 
   isElevated: () => invoke<boolean>("is_elevated"),
   restartAsAdmin: () => invoke<void>("restart_as_admin"),
+  getAlwaysRunAsAdmin: () => invoke<boolean>("get_always_run_as_admin"),
+  setAlwaysRunAsAdmin: (enabled: boolean) =>
+    invoke<AdminPreferenceResult>("set_always_run_as_admin", { enabled }),
 
   killProcess: (pid: number) => invoke<ActionResult>("kill_process", { pid }),
   killProcessTree: (pid: number) => invoke<ActionResult>("kill_process_tree", { pid }),

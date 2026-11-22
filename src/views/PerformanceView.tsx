@@ -1,6 +1,8 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowsDownUp as ArrowUpDown,
+  CaretLeft,
+  CaretRight,
   ClockCounterClockwise as History,
   Cpu,
   DownloadSimple as Download,
@@ -242,6 +244,9 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
   const [showAllProcesses, setShowAllProcesses] = useState(false);
   const exportMenuRef = useRef<HTMLDivElement>(null);
+  const spikesScrollRef = useRef<HTMLDivElement>(null);
+  const [spikesCanScrollLeft, setSpikesCanScrollLeft] = useState(false);
+  const [spikesCanScrollRight, setSpikesCanScrollRight] = useState(false);
 
   const handleSwapGpuSeries = (slotIndex: number) => {
     const clicked = gpuBottomSlots[slotIndex];
@@ -695,8 +700,51 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
     for (const pt of slicedHistory) {
       if (pt.isSpike) out.push(pt);
     }
-    return out.slice(-6).reverse();
+    return out.slice(-10).reverse();
   }, [slicedHistory]);
+
+  const updateSpikesScrollState = useCallback(() => {
+    const el = spikesScrollRef.current;
+    if (!el) {
+      setSpikesCanScrollLeft(false);
+      setSpikesCanScrollRight(false);
+      return;
+    }
+    setSpikesCanScrollLeft(el.scrollLeft > 2);
+    setSpikesCanScrollRight(el.scrollLeft + el.clientWidth < el.scrollWidth - 2);
+  }, []);
+
+  useEffect(() => {
+    const el = spikesScrollRef.current;
+    if (!el) {
+      setSpikesCanScrollLeft(false);
+      setSpikesCanScrollRight(false);
+      return;
+    }
+    updateSpikesScrollState();
+    const ro = new ResizeObserver(updateSpikesScrollState);
+    ro.observe(el);
+    const onWheel = (e: WheelEvent) => {
+      if (el.scrollWidth <= el.clientWidth) return;
+      const delta = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
+      if (delta !== 0) {
+        e.preventDefault();
+        el.scrollLeft += delta;
+        updateSpikesScrollState();
+      }
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => {
+      ro.disconnect();
+      el.removeEventListener("wheel", onWheel);
+    };
+  }, [detectedSpikes.length, updateSpikesScrollState]);
+
+  const scrollSpikesBy = (offset: number) => {
+    const el = spikesScrollRef.current;
+    if (!el) return;
+    el.scrollBy({ left: offset, behavior: "smooth" });
+  };
 
   const selectSpikeWindow = (ts: number) => {
     if (slicedHistory.length === 0) return;
@@ -1011,7 +1059,7 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
 
       {/* Main Chart + Range/Spike Analytics Panel — Fixed-height cards to prevent ANY layout shift */}
       <div className="grid grid-cols-1 xl:grid-cols-[1fr_365px] gap-4 items-stretch">
-        <div className="fluent-card p-4 flex flex-col gap-3 h-[500px] overflow-hidden min-w-0">
+        <div className="fluent-card p-4 flex flex-col gap-2.5 h-[500px] overflow-hidden min-w-0">
           <div className="h-[32px] shrink-0 flex items-center justify-between gap-2 min-w-0">
             <div className="flex items-center gap-2 min-w-0">
               <span className="shrink-0" style={{ color: metricConfig.color }}>
@@ -1086,14 +1134,14 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
             </div>
           </div>
 
-          <div className="h-[320px] shrink-0 w-full">
+          <div className="h-[344px] shrink-0 w-full">
             <InteractiveAreaChart
               data={slicedHistory}
               valueSelector={metricConfig.selector}
               color={metricConfig.color}
               unit={metricConfig.unit}
               maxValue={metricConfig.max}
-              height={320}
+              height={344}
               selectedRange={selectedRange}
               onSelectRange={setSelectedRange}
               onHoverPoint={setHoverPoint}
@@ -1102,7 +1150,7 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
 
           {/* Selection / Status Strip — ALWAYS rendered with fixed height so hover/selection NEVER shifts layout */}
           <div
-            className="h-[34px] shrink-0 flex items-center justify-between gap-2 px-3 rounded-xl border text-xs overflow-hidden"
+            className="h-[30px] shrink-0 flex items-center justify-between gap-2 px-3 rounded-xl border text-xs overflow-hidden"
             style={
               isPinned
                 ? {
@@ -1164,48 +1212,78 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
             )}
           </div>
 
-          {/* Detected Spikes Strip — Compact fixed height & internal scroll */}
+          {/* Detected Spikes Strip — Single-line horizontal scroll with pinned label & arrow controls */}
           <div
-            className="h-[44px] shrink-0 overflow-y-auto stable-scroll pt-2 border-t flex items-center"
+            className="h-[32px] shrink-0 pt-1.5 border-t flex items-center gap-1.5 min-w-0 overflow-hidden"
             style={{ borderColor: "var(--border-subtle)" }}
           >
             {detectedSpikes.length > 0 ? (
-              <div className="flex items-center gap-1.5 flex-wrap w-full">
+              <>
                 <span
-                  className="text-[11px] font-semibold flex items-center gap-1 shrink-0 mr-0.5"
+                  className="text-[11px] font-semibold flex items-center gap-1 shrink-0 whitespace-nowrap"
                   style={{ color: "var(--accent-danger)" }}
                 >
                   <AlertTriangle className="w-3.5 h-3.5" />{" "}
                   {t("perf.spikesLabel")}
                 </span>
-                {detectedSpikes.map((point) => {
-                  const isIncluded =
-                    selectedRange != null &&
-                    point.timestampMs >= selectedRange.startMs &&
-                    point.timestampMs <= selectedRange.endMs;
-                  return (
-                    <button
-                      key={point.timestampMs}
-                      onClick={() => selectSpikeWindow(point.timestampMs)}
-                      className="px-2 py-0.5 rounded-md text-[11px] font-medium cursor-pointer transition-colors whitespace-nowrap"
-                      style={{
-                        backgroundColor: isIncluded
-                          ? "var(--accent-danger)"
-                          : "var(--accent-danger-soft)",
-                        color: isIncluded ? "#ffffff" : "var(--accent-danger)",
-                      }}
-                    >
-                      {formatTimeShort(point.timestampMs, language)}
-                      {point.spikeReason
-                        ? ` • ${localizeSpikeReason(point.spikeReason, language)}`
-                        : ""}
-                    </button>
-                  );
-                })}
-              </div>
+                {spikesCanScrollLeft && (
+                  <button
+                    type="button"
+                    onClick={() => scrollSpikesBy(-180)}
+                    className="w-5 h-5 rounded-md flex items-center justify-center shrink-0 cursor-pointer transition-colors hover:bg-[var(--bg-surface-hover)]"
+                    style={{ color: "var(--text-secondary)" }}
+                    title={t("perf.spikesScrollLeft")}
+                    aria-label={t("perf.spikesScrollLeft")}
+                  >
+                    <CaretLeft weight="bold" className="w-3 h-3" />
+                  </button>
+                )}
+                <div
+                  ref={spikesScrollRef}
+                  onScroll={updateSpikesScrollState}
+                  className="flex-1 min-w-0 flex items-center gap-1.5 flex-nowrap overflow-x-auto no-scrollbar"
+                >
+                  {detectedSpikes.map((point) => {
+                    const isIncluded =
+                      selectedRange != null &&
+                      point.timestampMs >= selectedRange.startMs &&
+                      point.timestampMs <= selectedRange.endMs;
+                    return (
+                      <button
+                        key={point.timestampMs}
+                        onClick={() => selectSpikeWindow(point.timestampMs)}
+                        className="px-2 py-0.5 rounded-md text-[11px] font-medium cursor-pointer transition-colors whitespace-nowrap shrink-0"
+                        style={{
+                          backgroundColor: isIncluded
+                            ? "var(--accent-danger)"
+                            : "var(--accent-danger-soft)",
+                          color: isIncluded ? "#ffffff" : "var(--accent-danger)",
+                        }}
+                      >
+                        {formatTimeShort(point.timestampMs, language)}
+                        {point.spikeReason
+                          ? ` • ${localizeSpikeReason(point.spikeReason, language)}`
+                          : ""}
+                      </button>
+                    );
+                  })}
+                </div>
+                {spikesCanScrollRight && (
+                  <button
+                    type="button"
+                    onClick={() => scrollSpikesBy(180)}
+                    className="w-5 h-5 rounded-md flex items-center justify-center shrink-0 cursor-pointer transition-colors hover:bg-[var(--bg-surface-hover)]"
+                    style={{ color: "var(--text-secondary)" }}
+                    title={t("perf.spikesScrollRight")}
+                    aria-label={t("perf.spikesScrollRight")}
+                  >
+                    <CaretRight weight="bold" className="w-3 h-3" />
+                  </button>
+                )}
+              </>
             ) : (
               <div
-                className="text-[11px]"
+                className="text-[11px] truncate"
                 style={{ color: "var(--text-muted)" }}
               >
                 {t("perf.noSpikes")}

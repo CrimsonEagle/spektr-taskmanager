@@ -24,6 +24,7 @@ export interface AppSettings {
   refreshMs: RefreshRateMs;
   closeToTray: boolean;
   minimizeToTrayOnMinimize: boolean;
+  releaseWebViewOnMinimize: boolean;
   trayCpuIcon: boolean;
   titleBarMetrics: TitleBarMetricsConfig;
   hudMetrics: HudMetricsConfig;
@@ -40,6 +41,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   refreshMs: 1000,
   closeToTray: false,
   minimizeToTrayOnMinimize: false,
+  releaseWebViewOnMinimize: true,
   trayCpuIcon: true,
   titleBarMetrics: {
     cpu: true,
@@ -80,10 +82,15 @@ function loadInitialSettings(): AppSettings {
         typeof parsed.minimizeToTrayOnMinimize === "boolean"
           ? parsed.minimizeToTrayOnMinimize
           : DEFAULT_SETTINGS.minimizeToTrayOnMinimize;
+      const releaseWebViewOnMinimize =
+        typeof parsed.releaseWebViewOnMinimize === "boolean"
+          ? parsed.releaseWebViewOnMinimize
+          : DEFAULT_SETTINGS.releaseWebViewOnMinimize;
       return {
         refreshMs,
         closeToTray,
         minimizeToTrayOnMinimize,
+        releaseWebViewOnMinimize,
         trayCpuIcon:
           typeof parsed.trayCpuIcon === "boolean"
             ? parsed.trayCpuIcon
@@ -140,6 +147,13 @@ export function useSettings() {
     []
   );
 
+  const setReleaseWebViewOnMinimize = useCallback(
+    (releaseWebViewOnMinimize: boolean) => {
+      setSettings((prev) => ({ ...prev, releaseWebViewOnMinimize }));
+    },
+    []
+  );
+
   const setTrayCpuIcon = useCallback((trayCpuIcon: boolean) => {
     setSettings((prev) => ({ ...prev, trayCpuIcon }));
   }, []);
@@ -172,6 +186,7 @@ export function useSettings() {
     setRefreshMs,
     setCloseToTray,
     setMinimizeToTrayOnMinimize,
+    setReleaseWebViewOnMinimize,
     setTrayCpuIcon,
     toggleTitleBarMetric,
     toggleHudMetric,

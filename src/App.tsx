@@ -29,6 +29,20 @@ import { ProcessesView } from "./views/ProcessesView";
 import { SystemToolsView } from "./views/SystemToolsView";
 
 const EMPTY_PROCESSES: ProcessEntry[] = [];
+const VALID_NAV_TABS = new Set<NavTab>([
+  "overview",
+  "processes",
+  "performance",
+  "network",
+  "tools",
+]);
+const VALID_PERF_METRICS = new Set<PerformanceMetric>([
+  "cpu",
+  "memory",
+  "gpu",
+  "disk",
+  "network",
+]);
 
 function isEditableOrControl(
   el: EventTarget | null,
@@ -94,6 +108,7 @@ export function App() {
     setRefreshMs,
     setCloseToTray,
     setMinimizeToTrayOnMinimize,
+    setReleaseWebViewOnMinimize,
     setTrayCpuIcon,
     toggleTitleBarMetric,
     toggleHudMetric,
@@ -117,6 +132,7 @@ export function App() {
 
   const [telemetryPaused, setTelemetryPaused] = useState<boolean>(false);
   const [isElevated, setIsElevated] = useState<boolean | null>(null);
+  const [uiStateHydrated, setUiStateHydrated] = useState<boolean>(false);
   const [searchFocusNonce, setSearchFocusNonce] = useState<number>(0);
   const [pickingWindow, setPickingWindow] = useState<boolean>(false);
   const [ruleDraftProcessName, setRuleDraftProcessName] = useState<
@@ -163,11 +179,42 @@ export function App() {
     api.setTelemetryPaused(telemetryPaused).catch(() => {});
   }, [telemetryPaused]);
 
+  // Restore last active tab & performance metric when reopening from Zero-WebView Tray / Taskbar
+  useEffect(() => {
+    let mounted = true;
+    api
+      .getUiState()
+      .then((ui) => {
+        if (!mounted) return;
+        if (VALID_NAV_TABS.has(ui.activeTab as NavTab)) {
+          setActiveTab(ui.activeTab as NavTab);
+        }
+        if (VALID_PERF_METRICS.has(ui.performanceMetric as PerformanceMetric)) {
+          setPerformanceMetric(ui.performanceMetric as PerformanceMetric);
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (mounted) setUiStateHydrated(true);
+      });
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
   useEffect(() => {
     api
-      .setTrayBehavior(settings.closeToTray, settings.minimizeToTrayOnMinimize)
+      .setTrayBehavior(
+        settings.closeToTray,
+        settings.minimizeToTrayOnMinimize,
+        settings.releaseWebViewOnMinimize
+      )
       .catch(() => {});
-  }, [settings.closeToTray, settings.minimizeToTrayOnMinimize]);
+  }, [
+    settings.closeToTray,
+    settings.minimizeToTrayOnMinimize,
+    settings.releaseWebViewOnMinimize,
+  ]);
 
   useEffect(() => {
     api.setTrayCpuIcon(settings.trayCpuIcon).catch(() => {});
@@ -182,18 +229,28 @@ export function App() {
     return () => document.removeEventListener("visibilitychange", onVisibility);
   }, []);
 
-  // Sync UI state with Rust backend so it can throttle / trim IPC payloads
+  // Sync UI state with Rust backend so it can throttle / trim IPC payloads & restore active tab
   useEffect(() => {
+    if (!uiStateHydrated) return;
     api
       .setUiState({
         visible: isVisible,
         activeTab,
+        performanceMetric,
         miniHud,
         paletteOpen,
         inspectedPid: selectedPid,
       })
       .catch(() => {});
-  }, [isVisible, activeTab, miniHud, paletteOpen, selectedPid]);
+  }, [
+    uiStateHydrated,
+    isVisible,
+    activeTab,
+    performanceMetric,
+    miniHud,
+    paletteOpen,
+    selectedPid,
+  ]);
 
   const pushToast = useCallback(
     (text: string, kind: ToastMessage["kind"] = "info") => {
@@ -622,11 +679,14 @@ export function App() {
             settings={settings}
             themePreference={preference}
             languagePreference={languagePreference}
+            isElevated={isElevated}
+            onRestartAsAdmin={handleRestartAsAdmin}
             onSetTheme={setPreference}
             onSetLanguage={setLanguagePreference}
             onSetRefreshMs={setRefreshMs}
             onSetCloseToTray={setCloseToTray}
             onSetMinimizeToTrayOnMinimize={setMinimizeToTrayOnMinimize}
+            onSetReleaseWebViewOnMinimize={setReleaseWebViewOnMinimize}
             onSetTrayCpuIcon={setTrayCpuIcon}
             onToggleTitleBarMetric={toggleTitleBarMetric}
             onToggleHudMetric={toggleHudMetric}

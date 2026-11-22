@@ -3,9 +3,13 @@ use std::collections::HashMap;
 
 const AUTOSTART_VALUE_NAME: &str = "Spektr Taskmanager";
 const LEGACY_AUTOSTART_VALUE_NAME: &str = "Pulse Taskmanager";
+const AUTOSTART_TASK_NAME: &str = "Spektr Taskmanager";
 const RUN_KEY_PATH: &str = "Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 const STARTUP_APPROVED_RUN_PATH: &str =
     "Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StartupApproved\\Run";
+
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 fn normalize_autostart_mode(mode: &str) -> &'static str {
     match mode {
@@ -15,8 +19,423 @@ fn normalize_autostart_mode(mode: &str) -> &'static str {
     }
 }
 
+fn autostart_mode_args(mode: &str) -> &'static str {
+    match normalize_autostart_mode(mode) {
+        "maximized" => "--start-maximized",
+        "minimized" => "--start-minimized",
+        _ => "",
+    }
+}
+
+fn xml_escape(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    for ch in input.chars() {
+        match ch {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&apos;"),
+            _ => out.push(ch),
+        }
+    }
+    out
+}
+
+fn build_autostart_task_xml(
+    user_sid: &str,
+    exe_path: &str,
+    working_dir: &str,
+    mode: &str,
+) -> String {
+    let args = autostart_mode_args(mode);
+    let arguments_tag = if args.is_empty() {
+        String::new()
+    } else {
+        format!("\n      <Arguments>{}</Arguments>", xml_escape(args))
+    };
+    let working_dir_tag = if working_dir.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "\n      <WorkingDirectory>{}</WorkingDirectory>",
+            xml_escape(working_dir)
+        )
+    };
+    let esc_sid = xml_escape(user_sid);
+    let esc_exe = xml_escape(exe_path);
+
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo>
+    <Description>Spektr Taskmanager Autostart (Administrator)</Description>
+  </RegistrationInfo>
+  <Triggers>
+    <LogonTrigger>
+      <Enabled>true</Enabled>
+      <UserId>{esc_sid}</UserId>
+    </LogonTrigger>
+  </Triggers>
+  <Principals>
+    <Principal id="Author">
+      <UserId>{esc_sid}</UserId>
+      <LogonType>InteractiveToken</LogonType>
+      <RunLevel>HighestAvailable</RunLevel>
+    </Principal>
+  </Principals>
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <AllowHardTerminate>false</AllowHardTerminate>
+    <StartWhenAvailable>false</StartWhenAvailable>
+    <RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable>
+    <AllowStartOnDemand>true</AllowStartOnDemand>
+    <Enabled>true</Enabled>
+    <Hidden>false</Hidden>
+    <RunOnlyIfIdle>false</RunOnlyIfIdle>
+    <WakeToRun>false</WakeToRun>
+    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
+    <Priority>5</Priority>
+  </Settings>
+  <Actions Context="Author">
+    <Exec>
+      <Command>{esc_exe}</Command>{arguments_tag}{working_dir_tag}
+    </Exec>
+  </Actions>
+</Task>
+"#
+    )
+}
+
+fn decode_schtasks_output(bytes: &[u8]) -> String {
+    if bytes.len() >= 2 && bytes[0] == 0xFF && bytes[1] == 0xFE {
+        let u16s: Vec<u16> = bytes[2..]
+            .chunks_exact(2)
+            .map(|c| u16::from_le_bytes([c[0], c[1]]))
+            .collect();
+        return String::from_utf16_lossy(&u16s);
+    }
+    if bytes.len() >= 4 && bytes[1] == 0 && bytes[3] == 0 {
+        let u16s: Vec<u16> = bytes
+            .chunks_exact(2)
+            .map(|c| u16::from_le_bytes([c[0], c[1]]))
+            .collect();
+        return String::from_utf16_lossy(&u16s);
+    }
+    String::from_utf8_lossy(bytes).into_owned()
+}
+
+fn parse_autostart_task_xml(xml: &str) -> AutostartConfig {
+    let lower = xml.to_lowercase();
+    let mode = if lower.contains("--start-minimized") || lower.contains("--minimized") {
+        "minimized"
+    } else if lower.contains("--start-maximized") || lower.contains("--maximized") {
+        "maximized"
+    } else {
+        "normal"
+    };
+
+    let elevated = lower.contains("<runlevel>highestavailable</runlevel>");
+
+    let settings_disabled = if let (Some(s), Some(e)) =
+        (lower.find("<settings>"), lower.find("</settings>"))
+    {
+        if s < e {
+            lower[s..e].contains("<enabled>false</enabled>")
+        } else {
+            false
+        }
+    } else {
+        false
+    };
+
+    AutostartConfig {
+        enabled: !settings_disabled,
+        mode: mode.to_string(),
+        elevated,
+    }
+}
+
+#[cfg(windows)]
+fn current_user_sid_string() -> Result<String, String> {
+    use std::ffi::c_void;
+    use windows::core::PWSTR;
+    use windows::Win32::Foundation::{CloseHandle, LocalFree, HANDLE, HLOCAL};
+    use windows::Win32::Security::Authorization::ConvertSidToStringSidW;
+    use windows::Win32::Security::{GetTokenInformation, TokenUser, TOKEN_QUERY, TOKEN_USER};
+    use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+
+    unsafe {
+        let mut token = HANDLE::default();
+        OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token)
+            .map_err(|e| format!("Benutzer-Token konnte nicht geöffnet werden: {e}"))?;
+
+        let mut needed: u32 = 0;
+        let _ = GetTokenInformation(token, TokenUser, None, 0, &mut needed);
+        if needed == 0 {
+            let _ = CloseHandle(token);
+            return Err("Benutzer-SID konnte nicht ermittelt werden.".into());
+        }
+
+        let mut buf = vec![0u8; needed as usize];
+        let res = GetTokenInformation(
+            token,
+            TokenUser,
+            Some(buf.as_mut_ptr() as *mut c_void),
+            needed,
+            &mut needed,
+        );
+        let _ = CloseHandle(token);
+        res.map_err(|e| format!("Benutzer-SID konnte nicht gelesen werden: {e}"))?;
+
+        let token_user = &*(buf.as_ptr() as *const TOKEN_USER);
+        let mut sid_pwstr = PWSTR::null();
+        ConvertSidToStringSidW(token_user.User.Sid, &mut sid_pwstr)
+            .map_err(|e| format!("SID-Konvertierung fehlgeschlagen: {e}"))?;
+
+        let sid_str = sid_pwstr
+            .to_string()
+            .map_err(|e| format!("SID-Dekodierung fehlgeschlagen: {e}"))?;
+        let _ = LocalFree(Some(HLOCAL(sid_pwstr.0 as *mut c_void)));
+        Ok(sid_str)
+    }
+}
+
+#[cfg(windows)]
+fn quote_win_arg(arg: &str) -> String {
+    if arg.is_empty() || arg.contains(' ') || arg.contains('\t') || arg.contains('"') {
+        format!("\"{}\"", arg.replace('"', "\\\""))
+    } else {
+        arg.to_string()
+    }
+}
+
+#[cfg(windows)]
+fn run_schtasks(args: &[&str], require_elevation: bool) -> Result<(), String> {
+    use std::os::windows::process::CommandExt;
+    use std::process::Command;
+
+    if !require_elevation || crate::process_ops::is_elevated() {
+        let output = Command::new("schtasks.exe")
+            .args(args)
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()
+            .map_err(|e| format!("Aufgabenplanung (schtasks.exe) konnte nicht gestartet werden: {e}"))?;
+
+        if output.status.success() {
+            return Ok(());
+        }
+        let stderr = decode_schtasks_output(&output.stderr);
+        let stdout = decode_schtasks_output(&output.stdout);
+        let detail = if !stderr.trim().is_empty() {
+            stderr.trim().to_string()
+        } else if !stdout.trim().is_empty() {
+            stdout.trim().to_string()
+        } else {
+            format!("Exit-Code {:?}", output.status.code())
+        };
+        return Err(format!("Aufgabenplanung fehlgeschlagen: {detail}"));
+    }
+
+    // Not currently elevated -> request one-time UAC elevation for schtasks.exe only
+    use windows::core::{w, PCWSTR};
+    use windows::Win32::Foundation::{CloseHandle, ERROR_CANCELLED, WAIT_OBJECT_0};
+    use windows::Win32::System::Threading::{GetExitCodeProcess, WaitForSingleObject};
+    use windows::Win32::UI::Shell::{ShellExecuteExW, SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW};
+    use windows::Win32::UI::WindowsAndMessaging::SW_HIDE;
+
+    let params = args
+        .iter()
+        .map(|a| quote_win_arg(a))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let wide_params: Vec<u16> = params.encode_utf16().chain(std::iter::once(0)).collect();
+
+    unsafe {
+        let mut sei = SHELLEXECUTEINFOW {
+            cbSize: std::mem::size_of::<SHELLEXECUTEINFOW>() as u32,
+            fMask: SEE_MASK_NOCLOSEPROCESS,
+            lpVerb: w!("runas"),
+            lpFile: w!("schtasks.exe"),
+            lpParameters: PCWSTR(wide_params.as_ptr()),
+            nShow: SW_HIDE.0,
+            ..Default::default()
+        };
+
+        if let Err(e) = ShellExecuteExW(&mut sei) {
+            if e.code() == ERROR_CANCELLED.to_hresult() {
+                return Err("Administrator-Freigabe (UAC) wurde abgebrochen.".into());
+            }
+            return Err(format!("Aufgabenplanung konnte nicht mit Adminrechten ausgeführt werden: {e}"));
+        }
+
+        if sei.hProcess.is_invalid() {
+            return Err("Aufgabenplanung-Prozesshandle ungültig.".into());
+        }
+
+        let wait = WaitForSingleObject(sei.hProcess, 30_000);
+        let mut exit_code: u32 = 1;
+        let got_code = GetExitCodeProcess(sei.hProcess, &mut exit_code).is_ok();
+        let _ = CloseHandle(sei.hProcess);
+
+        if wait != WAIT_OBJECT_0 {
+            return Err("Zeitüberschreitung beim Aktualisieren der Aufgabenplanung.".into());
+        }
+        if got_code && exit_code == 0 {
+            Ok(())
+        } else {
+            Err(format!(
+                "Aufgabenplanung meldete einen Fehler (Code {exit_code})."
+            ))
+        }
+    }
+}
+
+#[cfg(windows)]
+fn query_autostart_task_registry_exists() -> bool {
+    use windows::core::PCWSTR;
+    use windows::Win32::System::Registry::{
+        RegCloseKey, RegOpenKeyExW, HKEY, HKEY_LOCAL_MACHINE, KEY_READ,
+    };
+
+    let subkey = format!(
+        "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Schedule\\TaskCache\\Tree\\{AUTOSTART_TASK_NAME}"
+    );
+    let wide: Vec<u16> = subkey.encode_utf16().chain(std::iter::once(0)).collect();
+    unsafe {
+        let mut hkey = HKEY::default();
+        if RegOpenKeyExW(
+            HKEY_LOCAL_MACHINE,
+            PCWSTR(wide.as_ptr()),
+            Some(0),
+            KEY_READ,
+            &mut hkey,
+        )
+        .is_ok()
+        {
+            let _ = RegCloseKey(hkey);
+            true
+        } else {
+            false
+        }
+    }
+}
+
+#[cfg(windows)]
+fn query_autostart_task() -> Option<AutostartConfig> {
+    use std::os::windows::process::CommandExt;
+    use std::process::Command;
+
+    if let Ok(output) = Command::new("schtasks.exe")
+        .args(["/Query", "/TN", AUTOSTART_TASK_NAME, "/XML"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+    {
+        if output.status.success() {
+            let xml = decode_schtasks_output(&output.stdout);
+            if !xml.trim().is_empty() {
+                return Some(parse_autostart_task_xml(&xml));
+            }
+        }
+    }
+
+    if query_autostart_task_registry_exists() {
+        return Some(AutostartConfig {
+            enabled: true,
+            mode: "minimized".to_string(),
+            elevated: true,
+        });
+    }
+
+    None
+}
+
+#[cfg(windows)]
+fn remove_hkcu_run_entry() {
+    use windows::core::PCWSTR;
+    use windows::Win32::System::Registry::{
+        RegCloseKey, RegDeleteValueW, RegOpenKeyExW, HKEY, HKEY_CURRENT_USER, KEY_SET_VALUE,
+    };
+
+    let wide_run_path: Vec<u16> = RUN_KEY_PATH
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
+    let wide_name: Vec<u16> = AUTOSTART_VALUE_NAME
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
+    let legacy_wide: Vec<u16> = LEGACY_AUTOSTART_VALUE_NAME
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
+
+    unsafe {
+        let mut hkey = HKEY::default();
+        if RegOpenKeyExW(
+            HKEY_CURRENT_USER,
+            PCWSTR(wide_run_path.as_ptr()),
+            Some(0),
+            KEY_SET_VALUE,
+            &mut hkey,
+        )
+        .is_ok()
+        {
+            let _ = RegDeleteValueW(hkey, PCWSTR(wide_name.as_ptr()));
+            let _ = RegDeleteValueW(hkey, PCWSTR(legacy_wide.as_ptr()));
+            let _ = RegCloseKey(hkey);
+        }
+    }
+}
+
+#[cfg(windows)]
+fn create_elevated_autostart_task(clean_exe: &str, norm_mode: &str) -> Result<(), String> {
+    let user_sid = current_user_sid_string()?;
+    let working_dir = std::path::Path::new(clean_exe)
+        .parent()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_default();
+
+    let xml = build_autostart_task_xml(&user_sid, clean_exe, &working_dir, norm_mode);
+    let mut utf16_bytes = Vec::with_capacity(2 + xml.len() * 2);
+    utf16_bytes.extend_from_slice(&[0xFF, 0xFE]);
+    for unit in xml.encode_utf16() {
+        utf16_bytes.extend_from_slice(&unit.to_le_bytes());
+    }
+
+    let xml_path = std::env::temp_dir().join(format!(
+        "spektr_autostart_task_{}.xml",
+        std::process::id()
+    ));
+    std::fs::write(&xml_path, &utf16_bytes)
+        .map_err(|e| format!("Temporäre Aufgaben-XML konnte nicht geschrieben werden: {e}"))?;
+
+    let xml_path_str = xml_path.to_string_lossy().into_owned();
+    let res = run_schtasks(
+        &["/Create", "/TN", AUTOSTART_TASK_NAME, "/XML", &xml_path_str, "/F"],
+        true,
+    );
+    let _ = std::fs::remove_file(&xml_path);
+    res
+}
+
+#[cfg(windows)]
+fn delete_autostart_task_if_present() -> Result<(), String> {
+    if query_autostart_task().is_none() {
+        return Ok(());
+    }
+    run_schtasks(&["/Delete", "/TN", AUTOSTART_TASK_NAME, "/F"], true)
+}
+
 #[cfg(windows)]
 pub fn get_autostart_config() -> AutostartConfig {
+    // Prefer elevated Task Scheduler logon entry when present
+    if let Some(task_cfg) = query_autostart_task() {
+        return task_cfg;
+    }
+
     use std::ffi::c_void;
     use windows::core::PCWSTR;
     use windows::Win32::System::Registry::{
@@ -52,6 +471,7 @@ pub fn get_autostart_config() -> AutostartConfig {
         return AutostartConfig {
             enabled: false,
             mode: "minimized".to_string(),
+            elevated: false,
         };
     }
 
@@ -78,11 +498,16 @@ pub fn get_autostart_config() -> AutostartConfig {
     AutostartConfig {
         enabled,
         mode: mode.to_string(),
+        elevated: false,
     }
 }
 
 #[cfg(windows)]
-pub fn set_autostart_config(enabled: bool, mode: &str) -> Result<AutostartConfig, String> {
+pub fn set_autostart_config(
+    enabled: bool,
+    mode: &str,
+    elevated: bool,
+) -> Result<AutostartConfig, String> {
     use windows::core::PCWSTR;
     use windows::Win32::System::Registry::{
         RegCloseKey, RegCreateKeyExW, RegDeleteValueW, RegOpenKeyExW, RegSetValueExW, HKEY,
@@ -90,6 +515,36 @@ pub fn set_autostart_config(enabled: bool, mode: &str) -> Result<AutostartConfig
     };
 
     let norm_mode = normalize_autostart_mode(mode);
+
+    if !enabled {
+        delete_autostart_task_if_present()?;
+        remove_hkcu_run_entry();
+        return Ok(AutostartConfig {
+            enabled: false,
+            mode: norm_mode.to_string(),
+            elevated: false,
+        });
+    }
+
+    let exe_path = std::env::current_exe()
+        .map_err(|e| format!("Programmpfad konnte nicht ermittelt werden: {e}"))?;
+    let exe_str = exe_path.to_string_lossy();
+    let clean_exe = exe_str.strip_prefix("\\\\?\\").unwrap_or(&exe_str);
+
+    if elevated {
+        create_elevated_autostart_task(clean_exe, norm_mode)?;
+        // Remove standard HKCU Run entry so Windows does not launch Spektr twice at logon
+        remove_hkcu_run_entry();
+        return Ok(AutostartConfig {
+            enabled: true,
+            mode: norm_mode.to_string(),
+            elevated: true,
+        });
+    }
+
+    // Standard (non-elevated) HKCU Run entry — clean up any old elevated Task Scheduler task first
+    delete_autostart_task_if_present()?;
+
     let wide_run_path: Vec<u16> = RUN_KEY_PATH
         .encode_utf16()
         .chain(std::iter::once(0))
@@ -98,38 +553,6 @@ pub fn set_autostart_config(enabled: bool, mode: &str) -> Result<AutostartConfig
         .encode_utf16()
         .chain(std::iter::once(0))
         .collect();
-
-    if !enabled {
-        unsafe {
-            let mut hkey = HKEY::default();
-            if RegOpenKeyExW(
-                HKEY_CURRENT_USER,
-                PCWSTR(wide_run_path.as_ptr()),
-                Some(0),
-                KEY_SET_VALUE,
-                &mut hkey,
-            )
-            .is_ok()
-            {
-                let legacy_wide: Vec<u16> = LEGACY_AUTOSTART_VALUE_NAME
-                    .encode_utf16()
-                    .chain(std::iter::once(0))
-                    .collect();
-                let _ = RegDeleteValueW(hkey, PCWSTR(wide_name.as_ptr()));
-                let _ = RegDeleteValueW(hkey, PCWSTR(legacy_wide.as_ptr()));
-                let _ = RegCloseKey(hkey);
-            }
-        }
-        return Ok(AutostartConfig {
-            enabled: false,
-            mode: norm_mode.to_string(),
-        });
-    }
-
-    let exe_path = std::env::current_exe()
-        .map_err(|e| format!("Programmpfad konnte nicht ermittelt werden: {e}"))?;
-    let exe_str = exe_path.to_string_lossy();
-    let clean_exe = exe_str.strip_prefix("\\\\?\\").unwrap_or(&exe_str);
 
     let cmd = match norm_mode {
         "maximized" => format!("\"{clean_exe}\" --start-maximized"),
@@ -196,6 +619,7 @@ pub fn set_autostart_config(enabled: bool, mode: &str) -> Result<AutostartConfig
     Ok(AutostartConfig {
         enabled: true,
         mode: norm_mode.to_string(),
+        elevated: false,
     })
 }
 
@@ -204,14 +628,20 @@ pub fn get_autostart_config() -> AutostartConfig {
     AutostartConfig {
         enabled: false,
         mode: "minimized".to_string(),
+        elevated: false,
     }
 }
 
 #[cfg(not(windows))]
-pub fn set_autostart_config(_enabled: bool, mode: &str) -> Result<AutostartConfig, String> {
+pub fn set_autostart_config(
+    _enabled: bool,
+    mode: &str,
+    _elevated: bool,
+) -> Result<AutostartConfig, String> {
     Ok(AutostartConfig {
         enabled: false,
         mode: normalize_autostart_mode(mode).to_string(),
+        elevated: false,
     })
 }
 
@@ -972,4 +1402,57 @@ pub fn set_service_start_type(service_name: &str, start_type: &str) -> Result<()
 #[cfg(not(windows))]
 pub fn set_service_start_type(_service_name: &str, _start_type: &str) -> Result<(), String> {
     Err("Nur unter Windows unterstützt.".into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn autostart_task_xml_escapes_and_roundtrips() {
+        let xml = build_autostart_task_xml(
+            "S-1-5-21-1234-5678-9012-1001",
+            r#"C:\Program Files\Spektr & Tools\spektr-taskmanager.exe"#,
+            r#"C:\Program Files\Spektr & Tools"#,
+            "minimized",
+        );
+
+        assert!(xml.contains("<RunLevel>HighestAvailable</RunLevel>"));
+        assert!(xml.contains("<DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>"));
+        assert!(xml.contains("<StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>"));
+        assert!(xml.contains("<ExecutionTimeLimit>PT0S</ExecutionTimeLimit>"));
+        assert!(xml.contains("Spektr &amp; Tools"));
+        assert!(xml.contains("<Arguments>--start-minimized</Arguments>"));
+
+        let parsed = parse_autostart_task_xml(&xml);
+        assert!(parsed.enabled);
+        assert!(parsed.elevated);
+        assert_eq!(parsed.mode, "minimized");
+    }
+
+    #[test]
+    fn parse_autostart_task_xml_detects_disabled_and_modes() {
+        let xml_max = build_autostart_task_xml("S-1-5-21-1", r#"C:\app.exe"#, r#"C:\"#, "maximized")
+            .replace("<Enabled>true</Enabled>\n    <Hidden>", "<Enabled>false</Enabled>\n    <Hidden>");
+        let parsed_max = parse_autostart_task_xml(&xml_max);
+        assert!(!parsed_max.enabled);
+        assert!(parsed_max.elevated);
+        assert_eq!(parsed_max.mode, "maximized");
+
+        let xml_norm = build_autostart_task_xml("S-1-5-21-1", r#"C:\app.exe"#, r#"C:\"#, "normal");
+        let parsed_norm = parse_autostart_task_xml(&xml_norm);
+        assert!(parsed_norm.enabled);
+        assert!(parsed_norm.elevated);
+        assert_eq!(parsed_norm.mode, "normal");
+    }
+
+    #[test]
+    fn decode_schtasks_output_handles_utf16le_bom() {
+        let text = "<Task><RunLevel>HighestAvailable</RunLevel></Task>";
+        let mut bytes = vec![0xFF, 0xFE];
+        for u in text.encode_utf16() {
+            bytes.extend_from_slice(&u.to_le_bytes());
+        }
+        assert_eq!(decode_schtasks_output(&bytes), text);
+    }
 }
