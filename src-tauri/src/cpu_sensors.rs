@@ -33,7 +33,7 @@ mod win_impl {
     use super::CpuSensorReading;
     use std::collections::HashMap;
     use std::ffi::c_void;
-    use windows::core::{w, BSTR, GUID, PCWSTR, VARIANT};
+    use windows::core::{w, BSTR, GUID, PCWSTR};
     use windows::Win32::Devices::DeviceAndDriverInstallation::{
         CM_Get_Device_Interface_ListW, CM_Get_Device_Interface_List_SizeW,
         CM_GET_DEVICE_INTERFACE_LIST_PRESENT, CR_SUCCESS,
@@ -56,8 +56,9 @@ mod win_impl {
     use windows::Win32::System::Performance::{
         PdhAddEnglishCounterW, PdhCloseQuery, PdhCollectQueryData, PdhGetFormattedCounterArrayW,
         PdhGetFormattedCounterValue, PdhOpenQueryW, PDH_FMT_COUNTERVALUE,
-        PDH_FMT_COUNTERVALUE_ITEM_W, PDH_FMT_DOUBLE,
+        PDH_FMT_COUNTERVALUE_ITEM_W, PDH_FMT_DOUBLE, PDH_HCOUNTER, PDH_HQUERY,
     };
+    use windows::Win32::System::Variant::VARIANT;
     use windows::Win32::System::Power::{
         EMI_CHANNEL_MEASUREMENT_DATA, EMI_METADATA_SIZE, EMI_VERSION, EMI_VERSION_V1,
         EMI_VERSION_V2, GUID_DEVICE_ENERGY_METER, IOCTL_EMI_GET_MEASUREMENT,
@@ -75,14 +76,14 @@ mod win_impl {
     // 1. PDH Collector: Real Turbo CPU Clock, Per-Core Clocks, Thermal Zone, Power Meter
     // -------------------------------------------------------------------------
     struct PdhCpuCounters {
-        query: isize,
-        total_perf: Option<isize>,
-        total_base_freq: Option<isize>,
-        per_core_perf: Option<isize>,
-        per_core_base_freq: Option<isize>,
-        thermal_hi_prec: Option<isize>,
-        thermal_std: Option<isize>,
-        power_meter: Option<isize>,
+        query: PDH_HQUERY,
+        total_perf: Option<PDH_HCOUNTER>,
+        total_base_freq: Option<PDH_HCOUNTER>,
+        per_core_perf: Option<PDH_HCOUNTER>,
+        per_core_base_freq: Option<PDH_HCOUNTER>,
+        thermal_hi_prec: Option<PDH_HCOUNTER>,
+        thermal_std: Option<PDH_HCOUNTER>,
+        power_meter: Option<PDH_HCOUNTER>,
         array_buf: Vec<u8>,
         cached_base_mhz: u64,
         cached_per_core_base: HashMap<(u32, u32), u64>,
@@ -90,6 +91,8 @@ mod win_impl {
         acpi_temp_has_changed: bool,
         acpi_static_ticks: u32,
     }
+
+    unsafe impl Send for PdhCpuCounters {}
 
     impl Drop for PdhCpuCounters {
         fn drop(&mut self) {
@@ -102,13 +105,13 @@ mod win_impl {
     impl PdhCpuCounters {
         fn open() -> Option<Self> {
             unsafe {
-                let mut query = 0isize;
+                let mut query = PDH_HQUERY::default();
                 if PdhOpenQueryW(None, 0, &mut query) != 0 {
                     return None;
                 }
 
-                let add = |path: PCWSTR| -> Option<isize> {
-                    let mut counter = 0isize;
+                let add = |path: PCWSTR| -> Option<PDH_HCOUNTER> {
+                    let mut counter = PDH_HCOUNTER::default();
                     if PdhAddEnglishCounterW(query, path, 0, &mut counter) == 0 {
                         Some(counter)
                     } else {
@@ -165,7 +168,7 @@ mod win_impl {
             }
         }
 
-        fn read_scalar(&self, counter: isize) -> Option<f64> {
+        fn read_scalar(&self, counter: PDH_HCOUNTER) -> Option<f64> {
             unsafe {
                 let mut val = PDH_FMT_COUNTERVALUE::default();
                 if PdhGetFormattedCounterValue(counter, PDH_FMT_DOUBLE, None, &mut val) == 0 {
@@ -178,7 +181,7 @@ mod win_impl {
             }
         }
 
-        fn read_array(&mut self, counter: isize) -> Vec<(String, f64)> {
+        fn read_array(&mut self, counter: PDH_HCOUNTER) -> Vec<(String, f64)> {
             unsafe {
                 let mut buf_size: u32 = 0;
                 let mut item_count: u32 = 0;

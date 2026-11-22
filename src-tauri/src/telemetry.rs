@@ -10,8 +10,8 @@ use crate::net_etw::NetThroughputCollector;
 use crate::network;
 use crate::process_ops;
 use crate::win_cpu::WinCpuSampler;
-use chrono::Utc;
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::time::{SystemTime, UNIX_EPOCH};
 use sysinfo::{
     Components, Disks, Networks, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind,
 };
@@ -801,7 +801,10 @@ impl TelemetryEngine {
             spike_reason = Some(format!("GPU-Spitze ({:.0}%)", gpu_pct));
         }
 
-        let timestamp_ms = Utc::now().timestamp_millis();
+        let timestamp_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0);
         let latest_point = HistoryPoint {
             timestamp_ms,
             cpu_percent: (total_cpu * 10.0).round() / 10.0,

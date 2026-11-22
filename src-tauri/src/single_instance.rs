@@ -71,7 +71,7 @@ mod imp {
         fn drop(&mut self) {
             if !self.sd.0.is_null() {
                 unsafe {
-                    let _ = LocalFree(HLOCAL(self.sd.0));
+                    let _ = LocalFree(Some(HLOCAL(self.sd.0)));
                 }
             }
         }

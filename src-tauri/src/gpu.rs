@@ -325,11 +325,14 @@ mod nvml {
 
 #[cfg(windows)]
 struct GpuPdhHandles {
-    query: isize,
-    engine_counter: isize,
-    dedicated_mem_counter: Option<isize>,
-    shared_mem_counter: Option<isize>,
+    query: windows::Win32::System::Performance::PDH_HQUERY,
+    engine_counter: windows::Win32::System::Performance::PDH_HCOUNTER,
+    dedicated_mem_counter: Option<windows::Win32::System::Performance::PDH_HCOUNTER>,
+    shared_mem_counter: Option<windows::Win32::System::Performance::PDH_HCOUNTER>,
 }
+
+#[cfg(windows)]
+unsafe impl Send for GpuPdhHandles {}
 
 #[cfg(windows)]
 struct GpuPdhSample {
@@ -605,7 +608,7 @@ fn query_gpu_driver_registry(adapter_name: &str) -> (Option<String>, Option<Stri
         let mut class_key = HKEY::default();
         let class_path =
             w!("SYSTEM\\CurrentControlSet\\Control\\Class\\{4d36e968-e325-11ce-bfc1-08002be10318}");
-        if RegOpenKeyExW(HKEY_LOCAL_MACHINE, class_path, 0, KEY_READ, &mut class_key).is_err() {
+        if RegOpenKeyExW(HKEY_LOCAL_MACHINE, class_path, Some(0), KEY_READ, &mut class_key).is_err() {
             return (None, None);
         }
 
@@ -643,10 +646,10 @@ fn query_gpu_driver_registry(adapter_name: &str) -> (Option<String>, Option<Stri
             let status = RegEnumKeyExW(
                 class_key,
                 index,
-                PWSTR(name_buf.as_mut_ptr()),
+                Some(PWSTR(name_buf.as_mut_ptr())),
                 &mut name_len,
                 None,
-                PWSTR::null(),
+                None,
                 None,
                 None,
             );
@@ -666,7 +669,7 @@ fn query_gpu_driver_registry(adapter_name: &str) -> (Option<String>, Option<Stri
             if RegOpenKeyExW(
                 class_key,
                 PCWSTR(sub_wide.as_ptr()),
-                0,
+                Some(0),
                 KEY_READ,
                 &mut sub_key,
             )
@@ -720,16 +723,17 @@ fn query_gpu_driver_registry(_adapter_name: &str) -> (Option<String>, Option<Str
 fn open_persistent_gpu_pdh() -> Option<GpuPdhHandles> {
     use windows::core::{w, PCWSTR};
     use windows::Win32::System::Performance::{
-        PdhAddEnglishCounterW, PdhCloseQuery, PdhCollectQueryData, PdhOpenQueryW,
+        PdhAddEnglishCounterW, PdhCloseQuery, PdhCollectQueryData, PdhOpenQueryW, PDH_HCOUNTER,
+        PDH_HQUERY,
     };
 
     unsafe {
-        let mut query = 0isize;
+        let mut query = PDH_HQUERY::default();
         if PdhOpenQueryW(None, 0, &mut query) != 0 {
             return None;
         }
-        let add = |path: PCWSTR| -> Option<isize> {
-            let mut c = 0isize;
+        let add = |path: PCWSTR| -> Option<PDH_HCOUNTER> {
+            let mut c = PDH_HCOUNTER::default();
             if PdhAddEnglishCounterW(query, path, 0, &mut c) == 0 {
                 Some(c)
             } else {
@@ -756,7 +760,10 @@ fn open_persistent_gpu_pdh() -> Option<GpuPdhHandles> {
 }
 
 #[cfg(windows)]
-fn read_pdh_array(counter: isize, buffer: &mut Vec<u8>) -> Vec<(String, f64)> {
+fn read_pdh_array(
+    counter: windows::Win32::System::Performance::PDH_HCOUNTER,
+    buffer: &mut Vec<u8>,
+) -> Vec<(String, f64)> {
     use windows::Win32::System::Performance::{
         PdhGetFormattedCounterArrayW, PDH_FMT_COUNTERVALUE_ITEM_W, PDH_FMT_DOUBLE,
     };
@@ -887,7 +894,10 @@ fn collect_pdh_gpu_sample(
         }
     }
 
-    let pick_adapter_mem = |counter: Option<isize>, buf: &mut Vec<u8>| -> Option<u64> {
+    let pick_adapter_mem =
+        |counter: Option<windows::Win32::System::Performance::PDH_HCOUNTER>,
+         buf: &mut Vec<u8>|
+         -> Option<u64> {
         let c = counter?;
         let items = read_pdh_array(c, buf);
         let mut primary_val: Option<u64> = None;

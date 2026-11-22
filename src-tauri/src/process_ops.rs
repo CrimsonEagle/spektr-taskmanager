@@ -499,7 +499,7 @@ pub fn restart_process(pid: u32, exe_path: &str, cmd_line: &str) -> Result<u32, 
 
         CreateProcessW(
             app_ptr,
-            PWSTR(cmd_wide.as_mut_ptr()),
+            Some(PWSTR(cmd_wide.as_mut_ptr())),
             None,
             None,
             false,

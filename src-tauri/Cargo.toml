@@ -5,10 +5,6 @@ description = "Spektr Taskmanager — Moderner Windows Task-Manager"
 authors = ["Marco"]
 edition = "2021"
 
-[lib]
-name = "spektr_taskmanager_lib"
-crate-type = ["rlib"]
-
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
@@ -18,12 +14,10 @@ tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sysinfo = "0.33"
-chrono = "0.4"
 
 [target.'cfg(windows)'.dependencies]
 webview2-com = "0.39"
-windows-core = "0.62"
-windows = { version = "0.58", features = [
+windows = { version = "0.62", features = [
     "Win32_Foundation",
     "Win32_Security",
     "Win32_Security_Authorization",
@@ -62,7 +56,12 @@ debug = "line-tables-only"
 
 [profile.release]
 panic = "abort"
-codegen-units = 1
-lto = true
+codegen-units = 16
+lto = "thin"
 opt-level = "s"
 strip = true
+
+[profile.dist]
+inherits = "release"
+codegen-units = 1
+lto = true

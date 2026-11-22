@@ -59,7 +59,7 @@ pub fn find_file_locks(
     unsafe {
         let mut session: u32 = 0;
         let mut session_key = [0u16; 64];
-        let start_res = RmStartSession(&mut session, 0, PWSTR(session_key.as_mut_ptr()));
+        let start_res = RmStartSession(&mut session, Some(0), PWSTR(session_key.as_mut_ptr()));
         if start_res.0 != 0 {
             return Err(format!(
                 "Restart Manager Sitzung konnte nicht gestartet werden (Code {}).",

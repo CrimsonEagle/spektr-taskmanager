@@ -141,7 +141,7 @@ fn extract_icon_data_uri(exe_path: &str) -> Option<String> {
 
             let mut bmp = BITMAP::default();
             if GetObjectW(
-                hbm_color,
+                hbm_color.into(),
                 std::mem::size_of::<BITMAP>() as i32,
                 Some(&mut bmp as *mut _ as *mut c_void),
             ) == 0
@@ -228,10 +228,10 @@ fn extract_icon_data_uri(exe_path: &str) -> Option<String> {
 
         // Always free all GDI / Icon handles
         if !icon_info.hbmColor.is_invalid() {
-            let _ = DeleteObject(icon_info.hbmColor);
+            let _ = DeleteObject(icon_info.hbmColor.into());
         }
         if !icon_info.hbmMask.is_invalid() {
-            let _ = DeleteObject(icon_info.hbmMask);
+            let _ = DeleteObject(icon_info.hbmMask.into());
         }
         let _ = DestroyIcon(hicon);
 

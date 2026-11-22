@@ -105,7 +105,7 @@ pub fn set_autostart_config(enabled: bool, mode: &str) -> Result<AutostartConfig
             if RegOpenKeyExW(
                 HKEY_CURRENT_USER,
                 PCWSTR(wide_run_path.as_ptr()),
-                0,
+                Some(0),
                 KEY_SET_VALUE,
                 &mut hkey,
             )
@@ -150,7 +150,7 @@ pub fn set_autostart_config(enabled: bool, mode: &str) -> Result<AutostartConfig
         RegCreateKeyExW(
             HKEY_CURRENT_USER,
             PCWSTR(wide_run_path.as_ptr()),
-            0,
+            Some(0),
             None,
             REG_OPTION_NON_VOLATILE,
             KEY_WRITE,
@@ -164,7 +164,7 @@ pub fn set_autostart_config(enabled: bool, mode: &str) -> Result<AutostartConfig
         let set_res = RegSetValueExW(
             hkey,
             PCWSTR(wide_name.as_ptr()),
-            0,
+            Some(0),
             REG_SZ,
             Some(cmd_bytes),
         )
@@ -182,7 +182,7 @@ pub fn set_autostart_config(enabled: bool, mode: &str) -> Result<AutostartConfig
         if RegOpenKeyExW(
             HKEY_CURRENT_USER,
             PCWSTR(wide_approved.as_ptr()),
-            0,
+            Some(0),
             KEY_SET_VALUE,
             &mut app_key,
         )
@@ -309,7 +309,7 @@ fn read_task_scheduler_startup() -> Vec<StartupEntry> {
         if RegOpenKeyExW(
             HKEY_LOCAL_MACHINE,
             w!("SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Schedule\\TaskCache\\Tasks"),
-            0,
+            Some(0),
             KEY_READ,
             &mut tasks_root,
         )
@@ -338,7 +338,7 @@ fn read_task_scheduler_startup() -> Vec<StartupEntry> {
             if RegOpenKeyExW(
                 HKEY_LOCAL_MACHINE,
                 PCWSTR(wide_sub.as_ptr()),
-                0,
+                Some(0),
                 KEY_READ,
                 &mut trig_key,
             )
@@ -354,10 +354,10 @@ fn read_task_scheduler_startup() -> Vec<StartupEntry> {
                 let res = RegEnumKeyExW(
                     trig_key,
                     idx,
-                    PWSTR(guid_buf.as_mut_ptr()),
+                    Some(PWSTR(guid_buf.as_mut_ptr())),
                     &mut guid_len,
                     None,
-                    PWSTR::null(),
+                    None,
                     None,
                     None,
                 );
@@ -446,7 +446,7 @@ fn read_startup_approved(
 
     unsafe {
         let mut hkey = HKEY::default();
-        if RegOpenKeyExW(root, PCWSTR(wide_subkey.as_ptr()), 0, KEY_READ, &mut hkey).is_err() {
+        if RegOpenKeyExW(root, PCWSTR(wide_subkey.as_ptr()), Some(0), KEY_READ, &mut hkey).is_err() {
             return map;
         }
 
@@ -461,7 +461,7 @@ fn read_startup_approved(
             let res = RegEnumValueW(
                 hkey,
                 index,
-                windows::core::PWSTR(name_buf.as_mut_ptr()),
+                Some(windows::core::PWSTR(name_buf.as_mut_ptr())),
                 &mut name_len,
                 None,
                 Some(&mut value_type.0),
@@ -504,7 +504,7 @@ fn read_run_key(
 
     unsafe {
         let mut hkey = HKEY::default();
-        if RegOpenKeyExW(root, PCWSTR(wide_subkey.as_ptr()), 0, KEY_READ, &mut hkey).is_err() {
+        if RegOpenKeyExW(root, PCWSTR(wide_subkey.as_ptr()), Some(0), KEY_READ, &mut hkey).is_err() {
             return entries;
         }
 
@@ -519,7 +519,7 @@ fn read_run_key(
             let res = RegEnumValueW(
                 hkey,
                 index,
-                windows::core::PWSTR(name_buf.as_mut_ptr()),
+                Some(windows::core::PWSTR(name_buf.as_mut_ptr())),
                 &mut name_len,
                 None,
                 Some(&mut value_type.0),
@@ -603,7 +603,7 @@ pub fn toggle_startup_entry(name: &str, registry_subkey: &str, enable: bool) -> 
         let open_res = RegCreateKeyExW(
             root,
             PCWSTR(wide_path.as_ptr()),
-            0,
+            Some(0),
             None,
             REG_OPTION_NON_VOLATILE,
             KEY_WRITE,
@@ -624,7 +624,7 @@ pub fn toggle_startup_entry(name: &str, registry_subkey: &str, enable: bool) -> 
         let set_res = RegSetValueExW(
             hkey,
             PCWSTR(wide_name.as_ptr()),
-            0,
+            Some(0),
             REG_BINARY,
             Some(&payload),
         );
@@ -766,7 +766,7 @@ fn open_services_registry_key() -> Option<windows::Win32::System::Registry::HKEY
         if RegOpenKeyExW(
             HKEY_LOCAL_MACHINE,
             w!("SYSTEM\\CurrentControlSet\\Services"),
-            0,
+            Some(0),
             KEY_READ,
             &mut hkey,
         )

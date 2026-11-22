@@ -89,7 +89,7 @@ Accessible right from the sidebar and continuously enforced in the background on
 | Layer | Technologies |
 | :--- | :--- |
 | **Desktop Shell** | Tauri v2 (WebView2 on Windows, custom frameless title bar, native system tray) |
-| **Backend** | Rust (`sysinfo`, `tokio`, `windows` crate v0.58) |
+| **Backend** | Rust (`sysinfo`, `windows` crate v0.62) |
 | **Native Windows APIs** | `NtQuerySystemInformation`, `GetSystemTimes`, `PDH` (`GPU Engine`), `DXGI`, `GetExtendedTcpTable` / `GetExtendedUdpTable`, `RestartManager` (`RmGetList`), `NtSuspendProcess` / `NtResumeProcess`, `SetProcessInformation` (`ProcessPowerThrottling`), `SCManager`, Win32 Registry, `GetSystemPowerStatus` |
 | **Frontend** | React 19, TypeScript, Vite 6, Tailwind CSS v4, Framer Motion, Phosphor Icons (Duotone) |
 
@@ -114,6 +114,9 @@ pnpm tauri dev
 
 # Build optimized standalone executable and Windows installers (NSIS .exe & .msi)
 pnpm tauri build
+
+# Fast local release build without installers (standalone .exe only)
+pnpm tauri:build:fast
 ```
 
 ### Build Outputs

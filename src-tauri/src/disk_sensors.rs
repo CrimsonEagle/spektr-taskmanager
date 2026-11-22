@@ -62,7 +62,7 @@ mod win_impl {
     use windows::Win32::System::IO::DeviceIoControl;
     use windows::Win32::System::Performance::{
         PdhAddEnglishCounterW, PdhCloseQuery, PdhCollectQueryData, PdhGetFormattedCounterArrayW,
-        PdhOpenQueryW, PDH_FMT_COUNTERVALUE_ITEM_W, PDH_FMT_DOUBLE,
+        PdhOpenQueryW, PDH_FMT_COUNTERVALUE_ITEM_W, PDH_FMT_DOUBLE, PDH_HCOUNTER, PDH_HQUERY,
     };
 
     const IOCTL_STORAGE_QUERY_PROPERTY: u32 = 0x002D1400;
@@ -92,15 +92,17 @@ mod win_impl {
     }
 
     pub struct DiskSensorCollector {
-        query: Option<isize>,
-        idle_counter: Option<isize>,
-        response_counter: Option<isize>,
-        read_counter: Option<isize>,
-        write_counter: Option<isize>,
+        query: Option<PDH_HQUERY>,
+        idle_counter: Option<PDH_HCOUNTER>,
+        response_counter: Option<PDH_HCOUNTER>,
+        read_counter: Option<PDH_HCOUNTER>,
+        write_counter: Option<PDH_HCOUNTER>,
         array_buf: Vec<u8>,
         hw_cache: HashMap<String, DriveHardwareMeta>,
         system_drive: String,
     }
+
+    unsafe impl Send for DiskSensorCollector {}
 
     impl Drop for DiskSensorCollector {
         fn drop(&mut self) {
@@ -259,7 +261,7 @@ mod win_impl {
             }
         }
 
-        fn read_array(&mut self, counter: isize) -> Vec<(String, f64)> {
+        fn read_array(&mut self, counter: PDH_HCOUNTER) -> Vec<(String, f64)> {
             unsafe {
                 let mut buf_size: u32 = 0;
                 let mut item_count: u32 = 0;
@@ -314,20 +316,20 @@ mod win_impl {
     }
 
     fn open_disk_pdh() -> (
-        Option<isize>,
-        Option<isize>,
-        Option<isize>,
-        Option<isize>,
-        Option<isize>,
+        Option<PDH_HQUERY>,
+        Option<PDH_HCOUNTER>,
+        Option<PDH_HCOUNTER>,
+        Option<PDH_HCOUNTER>,
+        Option<PDH_HCOUNTER>,
     ) {
         unsafe {
-            let mut query = 0isize;
+            let mut query = PDH_HQUERY::default();
             if PdhOpenQueryW(None, 0, &mut query) != 0 {
                 return (None, None, None, None, None);
             }
 
-            let add = |path: PCWSTR| -> Option<isize> {
-                let mut c = 0isize;
+            let add = |path: PCWSTR| -> Option<PDH_HCOUNTER> {
+                let mut c = PDH_HCOUNTER::default();
                 if PdhAddEnglishCounterW(query, path, 0, &mut c) == 0 {
                     Some(c)
                 } else {

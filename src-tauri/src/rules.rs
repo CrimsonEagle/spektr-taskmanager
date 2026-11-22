@@ -1,9 +1,15 @@
 use crate::models::{ProcessEntry, ProcessRule, RuleAlertEvent};
 use crate::process_ops;
-use chrono::Utc;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+fn unix_timestamp_millis() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
 
 const ALERT_COOLDOWN: Duration = Duration::from_secs(60);
 
@@ -69,7 +75,7 @@ impl RuleStore {
             return Err("Prozessname darf nicht leer sein.".into());
         }
         if rule.id.trim().is_empty() {
-            rule.id = format!("rule-{}", Utc::now().timestamp_millis());
+            rule.id = format!("rule-{}", unix_timestamp_millis());
         }
 
         // Reset applied state for this rule so updated settings take effect
@@ -109,7 +115,7 @@ impl RuleStore {
 
         let self_pid = std::process::id();
         let now = Instant::now();
-        let now_ts = Utc::now().timestamp_millis() as u64;
+        let now_ts = unix_timestamp_millis();
         let mut alerts = Vec::new();
 
         for proc_ in processes {
