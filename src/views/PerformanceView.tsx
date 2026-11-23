@@ -243,8 +243,10 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
   const [hoverPoint, setHoverPoint] = useState<HistoryPoint | null>(null);
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
   const [showAllProcesses, setShowAllProcesses] = useState(false);
+  const [defaultProcessLimit, setDefaultProcessLimit] = useState(5);
   const exportMenuRef = useRef<HTMLDivElement>(null);
   const spikesScrollRef = useRef<HTMLDivElement>(null);
+  const processListBoxRef = useRef<HTMLDivElement>(null);
   const [spikesCanScrollLeft, setSpikesCanScrollLeft] = useState(false);
   const [spikesCanScrollRight, setSpikesCanScrollRight] = useState(false);
 
@@ -683,17 +685,47 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
 
       const capped = filtered.slice(0, 30);
       return {
-        displayedProcesses: showAllProcesses ? capped : capped.slice(0, 5),
+        displayedProcesses: showAllProcesses
+          ? capped
+          : capped.slice(0, defaultProcessLimit),
         totalAvailableProcesses: capped.length,
       };
     }
 
     const histAll = analytics.allProcesses;
     return {
-      displayedProcesses: showAllProcesses ? histAll : histAll.slice(0, 5),
+      displayedProcesses: showAllProcesses
+        ? histAll
+        : histAll.slice(0, defaultProcessLimit),
       totalAvailableProcesses: histAll.length,
     };
-  }, [isLiveMode, metric, snapshot.processes, analytics.allProcesses, showAllProcesses]);
+  }, [
+    isLiveMode,
+    metric,
+    snapshot.processes,
+    analytics.allProcesses,
+    showAllProcesses,
+    defaultProcessLimit,
+  ]);
+
+  // Dynamically fit more process rows when the right panel grows taller on high-res displays
+  useEffect(() => {
+    const el = processListBoxRef.current;
+    if (!el) return;
+    const recompute = () => {
+      const h = el.clientHeight;
+      if (h <= 0) return;
+      // Subtract list header (20px + 6px gap) and CPU residual row (34px + 6px gap) when active
+      const reserved = 26 + (metric === "cpu" ? 40 : 0);
+      const avail = Math.max(0, h - reserved);
+      const fit = Math.max(5, Math.floor((avail + 6) / 62));
+      setDefaultProcessLimit((prev) => (prev === fit ? prev : fit));
+    };
+    recompute();
+    const ro = new ResizeObserver(recompute);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [metric]);
 
   const detectedSpikes = useMemo(() => {
     const out: HistoryPoint[] = [];
@@ -938,9 +970,9 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
   );
 
   return (
-    <div className="flex flex-col gap-4 pb-6">
+    <div className="min-h-full flex flex-col gap-4">
       {/* Top Bar: Fixed-width Resource Selector + Time Window */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-3 shrink-0">
         <div className="flex items-center gap-1.5 flex-wrap">
           {filterTabs.map((tab) => {
             const active = metric === tab.id;
@@ -1057,9 +1089,10 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
         </div>
       </div>
 
-      {/* Main Chart + Range/Spike Analytics Panel — Fixed-height cards to prevent ANY layout shift */}
-      <div className="grid grid-cols-1 xl:grid-cols-[1fr_365px] gap-4 items-stretch">
-        <div className="fluent-card p-4 flex flex-col gap-2.5 h-[500px] overflow-hidden min-w-0">
+      {/* Main Chart + Range/Spike Analytics Panel — Automatically fills exact remaining viewport height without page overflow */}
+      <div className="xl:flex-1 xl:min-h-[460px] relative">
+        <div className="xl:absolute xl:inset-0 grid grid-cols-1 xl:grid-cols-[1fr_365px] 2xl:grid-cols-[1fr_410px] gap-4 items-stretch">
+          <div className="fluent-card p-4 flex flex-col gap-2.5 h-[500px] xl:h-full overflow-hidden min-w-0">
           <div className="h-[32px] shrink-0 flex items-center justify-between gap-2 min-w-0">
             <div className="flex items-center gap-2 min-w-0">
               <span className="shrink-0" style={{ color: metricConfig.color }}>
@@ -1134,7 +1167,7 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
             </div>
           </div>
 
-          <div className="h-[344px] shrink-0 w-full">
+          <div className="flex-1 min-h-0 w-full">
             <InteractiveAreaChart
               data={slicedHistory}
               valueSelector={metricConfig.selector}
@@ -1142,6 +1175,7 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
               unit={metricConfig.unit}
               maxValue={metricConfig.max}
               height={344}
+              fillHeight
               selectedRange={selectedRange}
               onSelectRange={setSelectedRange}
               onHoverPoint={setHoverPoint}
@@ -1292,8 +1326,8 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
           </div>
         </div>
 
-        {/* Right Panel: Metric-specific Top Processes & Range Analytics — Locked height matching chart card */}
-        <div className="fluent-card p-4 flex flex-col gap-3 h-[500px] overflow-hidden min-w-0">
+        {/* Right Panel: Metric-specific Top Processes & Range Analytics — Matches chart card height */}
+        <div className="fluent-card p-4 flex flex-col gap-3 h-[500px] xl:h-full overflow-hidden min-w-0">
           <div className="h-[40px] shrink-0 flex items-center justify-between gap-2 min-w-0">
             <div className="min-w-0">
               <h3 className="text-sm font-semibold flex items-center gap-1.5 truncate">
@@ -1563,8 +1597,8 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
             </div>
           )}
 
-          {/* Metric-Specific Top Processes List — Flex-1 scrollable inside fixed-height card */}
-          <div className="flex-1 min-h-0 flex flex-col gap-1.5">
+          {/* Metric-Specific Top Processes List — Flex-1 scrollable inside height-locked card */}
+          <div ref={processListBoxRef} className="flex-1 min-h-0 flex flex-col gap-1.5">
             <div className="h-5 shrink-0 flex items-center justify-between gap-2">
               <div
                 className="text-[10px] font-semibold uppercase tracking-wider truncate whitespace-nowrap"
@@ -1574,7 +1608,7 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
                   ? metricConfig.listTitleRange
                   : metricConfig.listTitleSingle}
               </div>
-              {totalAvailableProcesses > 5 && (
+              {totalAvailableProcesses > defaultProcessLimit && (
                 <button
                   onClick={() => setShowAllProcesses((v) => !v)}
                   className="text-[11px] font-semibold hover:underline cursor-pointer shrink-0 whitespace-nowrap"
@@ -1805,9 +1839,10 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
           </div>
         </div>
       </div>
+      </div>
 
       {/* Hardware Deep-Dive Grid — Context-aware for GPU & Disk (Task-Manager style) */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 shrink-0">
         {metric === "gpu" ? (
           <>
             {/* GPU Engines (3D, Copy, Video Encode, Video Decode) & Memory Breakdown */}

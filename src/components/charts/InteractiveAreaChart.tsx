@@ -10,6 +10,7 @@ interface InteractiveAreaChartProps {
   unit: string;
   maxValue?: number;
   height?: number;
+  fillHeight?: boolean;
   selectedRange: TimeRange | null;
   onSelectRange: (range: TimeRange | null) => void;
   onHoverPoint?: (point: HistoryPoint | null) => void;
@@ -102,12 +103,14 @@ export const InteractiveAreaChart: React.FC<InteractiveAreaChartProps> =
       unit,
       maxValue,
       height = 240,
+      fillHeight = false,
       selectedRange,
       onSelectRange,
       onHoverPoint,
     }) => {
       const { t, language } = useI18n();
       const uid = useId().replace(/:/g, "");
+      const containerRef = useRef<HTMLDivElement>(null);
       const svgRef = useRef<SVGSVGElement>(null);
       const cachedRectRef = useRef<{ left: number; width: number } | null>(null);
       const rafIdRef = useRef<number | null>(null);
@@ -117,28 +120,35 @@ export const InteractiveAreaChart: React.FC<InteractiveAreaChartProps> =
       const [dragAnchorIdx, setDragAnchorIdx] = useState<number | null>(null);
       const [dragCurrentIdx, setDragCurrentIdx] = useState<number | null>(null);
       const [chartWidth, setChartWidth] = useState<number>(920);
+      const [chartHeight, setChartHeight] = useState<number>(height);
 
       const width = chartWidth;
+      const effectiveHeight = fillHeight ? chartHeight : height;
       const padLeft = 44;
       const padRight = 14;
       const padTop = 16;
       const padBottom = 26;
       const plotW = Math.max(100, width - padLeft - padRight);
-      const plotH = Math.max(60, height - padTop - padBottom);
+      const plotH = Math.max(60, effectiveHeight - padTop - padBottom);
 
       const updateCachedRect = useCallback(() => {
-        if (!svgRef.current) return;
-        const rect = svgRef.current.getBoundingClientRect();
+        const el = containerRef.current ?? svgRef.current;
+        if (!el) return;
+        const rect = el.getBoundingClientRect();
         if (rect.width > 0) {
           cachedRectRef.current = { left: rect.left, width: rect.width };
           const nextW = Math.max(320, Math.round(rect.width));
           setChartWidth((prev) => (Math.abs(prev - nextW) >= 2 ? nextW : prev));
         }
-      }, []);
+        if (fillHeight && rect.height > 0) {
+          const nextH = Math.max(200, Math.round(rect.height));
+          setChartHeight((prev) => (Math.abs(prev - nextH) >= 2 ? nextH : prev));
+        }
+      }, [fillHeight]);
 
       // Cache SVG bounding rect via ResizeObserver instead of reading layout on every mousemove
       useEffect(() => {
-        const el = svgRef.current;
+        const el = containerRef.current ?? svgRef.current;
         if (!el) return;
         updateCachedRect();
         const ro = new ResizeObserver(() => updateCachedRect());
@@ -430,14 +440,23 @@ export const InteractiveAreaChart: React.FC<InteractiveAreaChartProps> =
 
       return (
         <div
-          className="relative w-full select-none shrink-0"
-          style={{ height: `${height}px` }}
+          ref={containerRef}
+          className={
+            fillHeight
+              ? "relative w-full h-full select-none"
+              : "relative w-full select-none shrink-0"
+          }
+          style={fillHeight ? undefined : { height: `${effectiveHeight}px` }}
         >
           <svg
             ref={svgRef}
-            viewBox={`0 0 ${width} ${height}`}
-            className="w-full cursor-crosshair block"
-            style={{ height: `${height}px` }}
+            viewBox={`0 0 ${width} ${effectiveHeight}`}
+            className={
+              fillHeight
+                ? "w-full h-full cursor-crosshair block"
+                : "w-full cursor-crosshair block"
+            }
+            style={fillHeight ? undefined : { height: `${effectiveHeight}px` }}
             onMouseEnter={handleMouseEnter}
             onMouseDown={handleMouseDown}
             onMouseMove={handleMouseMove}
@@ -630,7 +649,7 @@ export const InteractiveAreaChart: React.FC<InteractiveAreaChartProps> =
                   <text
                     key={idx}
                     x={c.x}
-                    y={height - 6}
+                    y={effectiveHeight - 6}
                     textAnchor={
                       idx === 0
                         ? "start"

@@ -636,6 +636,11 @@ fn check_file_locks(path: String, state: State<'_, AppState>) -> Result<Vec<File
 }
 
 #[tauri::command]
+fn read_clipboard_file_path() -> Result<Option<String>, String> {
+    file_lock::read_clipboard_file_path()
+}
+
+#[tauri::command]
 fn get_startup_entries() -> Vec<StartupEntry> {
     startup_services::list_startup_entries()
 }
@@ -1487,6 +1492,7 @@ fn main() {
             apply_quick_profile,
             get_network_connections,
             check_file_locks,
+            read_clipboard_file_path,
             get_startup_entries,
             toggle_startup_entry,
             get_autostart_config,

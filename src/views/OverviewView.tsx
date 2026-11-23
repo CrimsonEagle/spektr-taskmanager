@@ -31,6 +31,7 @@ import {
   NavTab,
   PerformanceMetric,
   TelemetrySnapshot,
+  ToolSubTab,
 } from "../types/telemetry";
 
 interface OverviewViewProps {
@@ -39,6 +40,7 @@ interface OverviewViewProps {
   onInspectPid: (pid: number, fallback?: BlameProcess) => void;
   onNavigate: (tab: NavTab) => void;
   onOpenPerformanceMetric: (metric: PerformanceMetric) => void;
+  onOpenToolTab: (tab: ToolSubTab) => void;
   onJumpToSpike: (timestampMs: number) => void;
   onRestartExplorer: () => void;
 }
@@ -54,6 +56,7 @@ export const OverviewView: React.FC<OverviewViewProps> = React.memo(({
   onInspectPid,
   onNavigate,
   onOpenPerformanceMetric,
+  onOpenToolTab,
   onJumpToSpike,
   onRestartExplorer,
 }) => {
@@ -732,7 +735,7 @@ export const OverviewView: React.FC<OverviewViewProps> = React.memo(({
             <button
               onClick={(e) => {
                 e.stopPropagation();
-                onNavigate("tools");
+                onOpenToolTab("filelock");
               }}
               className="flex items-center justify-between px-3 py-2 rounded-xl text-xs font-medium border cursor-pointer transition-colors hover:bg-[var(--bg-surface-hover)]"
               style={{

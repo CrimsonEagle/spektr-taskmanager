@@ -151,10 +151,100 @@ fn utf16_slice_to_string(slice: &[u16]) -> String {
     String::from_utf16_lossy(&slice[..end]).trim().to_string()
 }
 
+#[cfg(windows)]
+pub fn read_clipboard_file_path() -> Result<Option<String>, String> {
+    use windows::Win32::Foundation::HGLOBAL;
+    use windows::Win32::System::DataExchange::{
+        CloseClipboard, GetClipboardData, IsClipboardFormatAvailable, OpenClipboard,
+    };
+    use windows::Win32::System::Memory::{GlobalLock, GlobalUnlock};
+    use windows::Win32::UI::Shell::{DragQueryFileW, HDROP};
+
+    const CF_UNICODETEXT: u32 = 13;
+    const CF_HDROP: u32 = 15;
+
+    struct ClipboardGuard;
+    impl Drop for ClipboardGuard {
+        fn drop(&mut self) {
+            unsafe {
+                let _ = CloseClipboard();
+            }
+        }
+    }
+
+    unsafe {
+        let mut opened = false;
+        for _ in 0..3 {
+            if OpenClipboard(None).is_ok() {
+                opened = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(15));
+        }
+        if !opened {
+            return Err("Zwischenablage konnte nicht geöffnet werden.".into());
+        }
+        let _guard = ClipboardGuard;
+
+        // 1. Prefer CF_HDROP (files or folders copied via Ctrl+C in Windows Explorer)
+        if IsClipboardFormatAvailable(CF_HDROP).is_ok() {
+            if let Ok(handle) = GetClipboardData(CF_HDROP) {
+                let hdrop = HDROP(handle.0);
+                let count = DragQueryFileW(hdrop, 0xFFFF_FFFF, None);
+                if count > 0 {
+                    let len = DragQueryFileW(hdrop, 0, None);
+                    if len > 0 {
+                        let mut buf = vec![0u16; (len + 1) as usize];
+                        let written = DragQueryFileW(hdrop, 0, Some(&mut buf));
+                        if written > 0 {
+                            let path = String::from_utf16_lossy(&buf[..written as usize]);
+                            let trimmed = path.trim().trim_matches('"');
+                            if !trimmed.is_empty() {
+                                return Ok(Some(trimmed.to_string()));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2. Fallback to CF_UNICODETEXT ("Copy as path" Ctrl+Shift+C or manually copied path)
+        if IsClipboardFormatAvailable(CF_UNICODETEXT).is_ok() {
+            if let Ok(handle) = GetClipboardData(CF_UNICODETEXT) {
+                let hglobal = HGLOBAL(handle.0);
+                let ptr = GlobalLock(hglobal) as *const u16;
+                if !ptr.is_null() {
+                    let mut len = 0usize;
+                    while *ptr.add(len) != 0 && len < 32_768 {
+                        len += 1;
+                    }
+                    let slice = std::slice::from_raw_parts(ptr, len);
+                    let raw = String::from_utf16_lossy(slice);
+                    let _ = GlobalUnlock(hglobal);
+
+                    if let Some(first_line) = raw.lines().map(str::trim).find(|l| !l.is_empty()) {
+                        let candidate = first_line.trim_matches('"').trim();
+                        if !candidate.is_empty() && std::path::Path::new(candidate).exists() {
+                            return Ok(Some(candidate.to_string()));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(None)
+}
+
 #[cfg(not(windows))]
 pub fn find_file_locks(
     _file_path: &str,
     _proc_names: &HashMap<u32, String>,
 ) -> Result<Vec<FileLockEntry>, String> {
     Ok(Vec::new())
+}
+
+#[cfg(not(windows))]
+pub fn read_clipboard_file_path() -> Result<Option<String>, String> {
+    Ok(None)
 }

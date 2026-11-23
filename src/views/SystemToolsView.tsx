@@ -4,6 +4,7 @@ import {
   ArrowClockwise as RotateCw,
   ArrowsClockwise as RefreshCw,
   CheckCircle as CheckCircle2,
+  ClipboardText,
   FileLock as FileLock2,
   FolderLock as FolderSearch,
   FolderOpen,
@@ -12,6 +13,7 @@ import {
   Play,
   Plus,
   RocketLaunch as Rocket,
+  Shield,
   SlidersHorizontal,
   Stop as Square,
   Trash as Trash2,
@@ -29,26 +31,32 @@ import {
   ProcessRule,
   ServiceEntry,
   StartupEntry,
+  ToolSubTab,
 } from "../types/telemetry";
 
 interface SystemToolsViewProps {
+  activeSubTab: ToolSubTab;
+  onSubTabChange: (tab: ToolSubTab) => void;
+  isElevated?: boolean | null;
   onInspectPid: (pid: number) => void;
   onActionFeedback: (res: ActionResult) => void;
   ruleDraftProcessName?: string | null;
   onClearRuleDraft?: () => void;
 }
 
-type ToolSubTab = "startup" | "services" | "filelock" | "rules";
-
 export const SystemToolsView: React.FC<SystemToolsViewProps> = React.memo(
   ({
+    activeSubTab,
+    onSubTabChange,
+    isElevated,
     onInspectPid,
     onActionFeedback,
     ruleDraftProcessName,
     onClearRuleDraft,
   }) => {
     const { t, language } = useI18n();
-    const [subTab, setSubTab] = useState<ToolSubTab>("startup");
+    const subTab = activeSubTab;
+    const setSubTab = onSubTabChange;
     const timersRef = useRef<Set<number>>(new Set());
 
     useEffect(() => {
@@ -145,7 +153,7 @@ export const SystemToolsView: React.FC<SystemToolsViewProps> = React.memo(
       setRuleAlertCpu("");
       setRuleAlertRam("");
       onClearRuleDraft?.();
-    }, [ruleDraftProcessName, onClearRuleDraft]);
+    }, [ruleDraftProcessName, onClearRuleDraft, setSubTab]);
 
     const runFileLockCheck = useCallback(
       async (targetPath: string) => {
@@ -247,13 +255,13 @@ export const SystemToolsView: React.FC<SystemToolsViewProps> = React.memo(
       }
     };
 
-    const handlePickAndCheckFile = async () => {
+    const handlePickAndCheckFile = useCallback(async () => {
       const picked = await api.pickFile();
       if (picked) {
         setFilePath(picked);
         runFileLockCheck(picked);
       }
-    };
+    }, [runFileLockCheck]);
 
     const handlePickAndCheckFolder = async () => {
       const picked = await api.pickFolder();
@@ -262,6 +270,44 @@ export const SystemToolsView: React.FC<SystemToolsViewProps> = React.memo(
         runFileLockCheck(picked);
       }
     };
+
+    const handlePasteFromClipboard = useCallback(async () => {
+      try {
+        const path = await api.readClipboardFilePath();
+        if (path) {
+          setFilePath(path);
+          runFileLockCheck(path);
+        } else {
+          onActionFeedback({
+            ok: false,
+            message: t("tools.filelock.clipboardEmpty"),
+          });
+        }
+      } catch (err) {
+        onActionFeedback({ ok: false, message: String(err) });
+      }
+    }, [runFileLockCheck, onActionFeedback, t]);
+
+    // Global Ctrl+V shortcut on File Lock Finder tab (reads Explorer CF_HDROP or text path)
+    useEffect(() => {
+      if (subTab !== "filelock") return;
+      const onKeyDown = (e: KeyboardEvent) => {
+        if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== "v") return;
+        const target = e.target as HTMLElement | null;
+        if (
+          target &&
+          (target.tagName === "INPUT" ||
+            target.tagName === "TEXTAREA" ||
+            target.isContentEditable)
+        ) {
+          return;
+        }
+        e.preventDefault();
+        handlePasteFromClipboard();
+      };
+      window.addEventListener("keydown", onKeyDown);
+      return () => window.removeEventListener("keydown", onKeyDown);
+    }, [subTab, handlePasteFromClipboard]);
 
     const resetRuleForm = () => {
       setEditingRuleId(null);
@@ -829,33 +875,77 @@ export const SystemToolsView: React.FC<SystemToolsViewProps> = React.memo(
               </div>
             </div>
 
-            {/* Drag & Drop Zone */}
-            <div
-              className="rounded-xl border-2 border-dashed px-4 py-3 text-xs flex items-center justify-center gap-2 transition-colors"
-              style={{
-                borderColor: isDraggingFile
-                  ? "var(--accent-net)"
-                  : "var(--border-strong)",
-                backgroundColor: isDraggingFile
-                  ? "var(--accent-net-soft)"
-                  : "var(--bg-subtle)",
-                color: isDraggingFile
-                  ? "var(--accent-net)"
-                  : "var(--text-muted)",
-              }}
-            >
-              <Upload className="w-4 h-4 shrink-0" />
-              <span>
-                {isDraggingFile
-                  ? t("tools.filelock.dropActive")
-                  : t("tools.filelock.dropIdle")}
-              </span>
-            </div>
+            {/* Drag & Drop Zone (or clear UIPI notice when running elevated) */}
+            {isElevated ? (
+              <div
+                className="rounded-xl border px-4 py-3 text-xs flex items-start gap-2.5"
+                style={{
+                  borderColor: "rgba(245, 158, 11, 0.35)",
+                  backgroundColor: "rgba(245, 158, 11, 0.08)",
+                }}
+              >
+                <Shield className="w-4 h-4 shrink-0 mt-0.5 text-amber-500" />
+                <div className="min-w-0">
+                  <div
+                    className="font-semibold"
+                    style={{ color: "var(--text-primary)" }}
+                  >
+                    {t("tools.filelock.adminNoticeTitle")}
+                  </div>
+                  <div
+                    className="text-[11px] mt-0.5"
+                    style={{ color: "var(--text-secondary)" }}
+                  >
+                    {t("tools.filelock.adminNoticeDesc")}
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div
+                onClick={handlePickAndCheckFile}
+                role="button"
+                tabIndex={0}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    handlePickAndCheckFile();
+                  }
+                }}
+                className="rounded-xl border-2 border-dashed px-4 py-5 text-xs flex items-center justify-center gap-2.5 transition-colors cursor-pointer hover:bg-[var(--bg-surface-hover)]"
+                style={{
+                  borderColor: isDraggingFile
+                    ? "var(--accent-net)"
+                    : "var(--border-strong)",
+                  backgroundColor: isDraggingFile
+                    ? "var(--accent-net-soft)"
+                    : "var(--bg-subtle)",
+                  color: isDraggingFile
+                    ? "var(--accent-net)"
+                    : "var(--text-secondary)",
+                }}
+              >
+                <Upload
+                  className="w-4 h-4 shrink-0"
+                  style={{ color: "var(--accent-net)" }}
+                />
+                <span>
+                  {isDraggingFile
+                    ? t("tools.filelock.dropActive")
+                    : t("tools.filelock.dropIdle")}
+                </span>
+              </div>
+            )}
 
             <div className="flex items-center gap-2 flex-wrap">
               <input
                 value={filePath}
                 onChange={(e) => setFilePath(e.target.value)}
+                onPaste={(e) => {
+                  if (!e.clipboardData.getData("text")) {
+                    e.preventDefault();
+                    handlePasteFromClipboard();
+                  }
+                }}
                 onKeyDown={(e) =>
                   e.key === "Enter" && runFileLockCheck(filePath)
                 }
@@ -888,6 +978,20 @@ export const SystemToolsView: React.FC<SystemToolsViewProps> = React.memo(
               >
                 <FolderOpen className="w-4 h-4" />
                 {t("tools.filelock.pickFolder")}
+              </button>
+              <button
+                type="button"
+                onClick={handlePasteFromClipboard}
+                disabled={lockLoading}
+                title={t("tools.filelock.pasteClipboardTooltip")}
+                className="px-3 py-2.5 rounded-xl border text-xs font-semibold flex items-center gap-1.5 cursor-pointer hover:bg-[var(--bg-surface-hover)] disabled:opacity-40"
+                style={{
+                  backgroundColor: "var(--bg-surface-solid)",
+                  borderColor: "var(--border-subtle)",
+                }}
+              >
+                <ClipboardText className="w-4 h-4" />
+                {t("tools.filelock.pasteClipboard")}
               </button>
               <button
                 onClick={() => runFileLockCheck(filePath)}

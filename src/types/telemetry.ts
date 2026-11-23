@@ -251,6 +251,7 @@ export interface ActionResult {
 
 export type NavTab = "overview" | "processes" | "performance" | "network" | "tools";
 export type PerformanceMetric = "cpu" | "memory" | "gpu" | "disk" | "network";
+export type ToolSubTab = "startup" | "services" | "filelock" | "rules";
 export type ThemePreference = "system" | "light" | "dark";
 export type ResolvedTheme = "light" | "dark";
 export type LanguagePreference = "system" | "de" | "en";

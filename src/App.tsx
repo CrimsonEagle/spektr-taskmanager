@@ -21,6 +21,7 @@ import {
   PerformanceMetric,
   ProcessEntry,
   ToastMessage,
+  ToolSubTab,
 } from "./types/telemetry";
 import { NetworkView } from "./views/NetworkView";
 import { OverviewView } from "./views/OverviewView";
@@ -118,6 +119,7 @@ export function App() {
   const [activeTab, setActiveTab] = useState<NavTab>("overview");
   const [performanceMetric, setPerformanceMetric] =
     useState<PerformanceMetric>("cpu");
+  const [toolSubTab, setToolSubTab] = useState<ToolSubTab>("startup");
   const [selectedPid, setSelectedPid] = useState<number | null>(null);
   const [selectedFallback, setSelectedFallback] = useState<BlameProcess | null>(
     null
@@ -330,6 +332,10 @@ export function App() {
     },
     []
   );
+  const handleOpenToolTab = useCallback((subTab: ToolSubTab) => {
+    setToolSubTab(subTab);
+    setActiveTab("tools");
+  }, []);
   const handleTogglePause = useCallback(() => {
     setTelemetryPaused((p) => !p);
   }, []);
@@ -361,6 +367,7 @@ export function App() {
 
   const handleCreateRuleForProcess = useCallback((processName: string) => {
     setRuleDraftProcessName(processName);
+    setToolSubTab("rules");
     setActiveTab("tools");
   }, []);
 
@@ -578,6 +585,7 @@ export function App() {
                     onInspectPid={handleSelectPid}
                     onNavigate={setActiveTab}
                     onOpenPerformanceMetric={handleOpenPerformanceMetric}
+                    onOpenToolTab={handleOpenToolTab}
                     onJumpToSpike={handleJumpToSpike}
                     onRestartExplorer={handleRestartExplorer}
                   />
@@ -622,6 +630,9 @@ export function App() {
 
                 {activeTab === "tools" && (
                   <SystemToolsView
+                    activeSubTab={toolSubTab}
+                    onSubTabChange={setToolSubTab}
+                    isElevated={isElevated}
                     onInspectPid={handleSelectPid}
                     onActionFeedback={handleActionFeedback}
                     ruleDraftProcessName={ruleDraftProcessName}

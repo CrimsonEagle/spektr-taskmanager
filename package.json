@@ -1,7 +1,7 @@
 {
   "name": "spektr-taskmanager",
   "private": true,
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Fast, lightweight, and visually refined Windows Task Manager & system monitor",
   "license": "MIT",
   "author": "CrimsonEagle",

@@ -129,6 +129,7 @@ export const api = {
   getNetworkConnections: () =>
     invoke<NetworkConnectionEntry[]>("get_network_connections"),
   checkFileLocks: (path: string) => invoke<FileLockEntry[]>("check_file_locks", { path }),
+  readClipboardFilePath: () => invoke<string | null>("read_clipboard_file_path"),
 
   getStartupEntries: () => invoke<StartupEntry[]>("get_startup_entries"),
   toggleStartupEntry: (name: string, registrySubkey: string, enable: boolean) =>
