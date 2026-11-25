@@ -9,7 +9,7 @@
 
 Designed to deliver power-user insight without visual clutter, Spektr pairs native Windows kernel telemetry with a system-aligned Fluent UI (automatic Light & Dark Mode), semantic spectral color coding, and smooth 60 fps animations — all packed into a ~1.5 MB native Windows installer.
 
-> **Current Version:** `v0.3.1`
+> **Current Version:** `v0.3.2`
 
 <!--
 ## Screenshots

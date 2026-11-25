@@ -50,6 +50,16 @@ const cardAnim = {
   show: { opacity: 1, y: 0 },
 };
 
+const cardHover = {
+  y: -1.5,
+  transition: { duration: 0.15, ease: "easeOut" as const },
+};
+
+const cardTap = {
+  scale: 0.992,
+  transition: { duration: 0.08, ease: "easeOut" as const },
+};
+
 export const OverviewView: React.FC<OverviewViewProps> = React.memo(({
   snapshot,
   history,
@@ -97,20 +107,22 @@ export const OverviewView: React.FC<OverviewViewProps> = React.memo(({
       {recentSpikes.length > 0 && (
         <motion.div
           variants={cardAnim}
-          className="fluent-card px-4 py-2.5 flex items-center justify-between gap-3 flex-wrap"
+          className="fluent-card h-[44px] px-4 flex items-center justify-between gap-3 overflow-hidden"
           style={{ borderColor: "rgba(239, 68, 68, 0.32)" }}
         >
-          <div className="flex items-center gap-2 text-xs font-medium">
+          <div className="flex items-center gap-2 text-xs font-medium min-w-0 flex-1 overflow-hidden">
             <span className="w-6 h-6 rounded-lg bg-red-500/15 text-red-500 flex items-center justify-center shrink-0">
               <AlertTriangle className="w-3.5 h-3.5" />
             </span>
-            <span className="font-semibold">{t("overview.spikesDetected")}</span>
-            <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="font-semibold shrink-0 whitespace-nowrap">
+              {t("overview.spikesDetected")}
+            </span>
+            <div className="flex items-center gap-1.5 flex-nowrap overflow-x-auto no-scrollbar min-w-0">
               {recentSpikes.map((sp) => (
                 <button
                   key={sp.timestampMs}
                   onClick={() => onJumpToSpike(sp.timestampMs)}
-                  className="px-2 py-0.5 rounded-md text-[11px] font-medium cursor-pointer transition-colors hover:opacity-85"
+                  className="px-2 py-0.5 rounded-md text-[11px] font-medium cursor-pointer transition-colors hover:opacity-85 whitespace-nowrap shrink-0 tabular-nums"
                   style={{
                     backgroundColor: "var(--accent-danger-soft)",
                     color: "var(--accent-danger)",
@@ -124,7 +136,7 @@ export const OverviewView: React.FC<OverviewViewProps> = React.memo(({
           </div>
           <button
             onClick={() => onNavigate("performance")}
-            className="text-xs font-semibold hover:underline cursor-pointer"
+            className="text-xs font-semibold hover:underline cursor-pointer shrink-0 whitespace-nowrap"
             style={{ color: "var(--accent-cpu)" }}
           >
             {t("overview.openSpikeAnalysis")}
@@ -137,6 +149,8 @@ export const OverviewView: React.FC<OverviewViewProps> = React.memo(({
         {/* CPU Card */}
         <motion.div
           variants={cardAnim}
+          whileHover={cardHover}
+          whileTap={cardTap}
           onClick={() => onOpenPerformanceMetric("cpu")}
           className="fluent-card p-4 flex flex-col justify-between gap-3 cursor-pointer overflow-hidden min-w-0"
         >
@@ -170,7 +184,7 @@ export const OverviewView: React.FC<OverviewViewProps> = React.memo(({
                 {cpu.totalUsage.toFixed(0)}%
               </div>
               <div
-                className="text-[11px] tabular-nums mt-1 flex items-center justify-end gap-1.5 flex-wrap"
+                className="text-[11px] tabular-nums mt-1 min-h-[16px] flex items-center justify-end gap-1.5 flex-nowrap whitespace-nowrap"
                 style={{ color: "var(--text-muted)" }}
                 title={[
                   cpu.baseFrequencyMhz && cpu.baseFrequencyMhz > 0
@@ -256,6 +270,8 @@ export const OverviewView: React.FC<OverviewViewProps> = React.memo(({
         {/* RAM Card */}
         <motion.div
           variants={cardAnim}
+          whileHover={cardHover}
+          whileTap={cardTap}
           onClick={() => onOpenPerformanceMetric("memory")}
           className="fluent-card p-4 flex flex-col justify-between gap-3 cursor-pointer overflow-hidden min-w-0"
         >
@@ -344,11 +360,11 @@ export const OverviewView: React.FC<OverviewViewProps> = React.memo(({
               (memory.pagedPoolBytes ?? 0) > 0 ||
               (memory.nonPagedPoolBytes ?? 0) > 0) && (
               <div
-                className="flex items-center justify-between gap-2 text-[10px] mt-1 tabular-nums flex-wrap"
+                className="flex items-center justify-between gap-2 text-[10px] mt-1 tabular-nums flex-nowrap overflow-hidden"
                 style={{ color: "var(--text-muted)" }}
               >
                 {(memory.commitTotalBytes ?? 0) > 0 && (
-                  <span>
+                  <span className="truncate">
                     Commit: {formatBytes(memory.commitTotalBytes ?? 0)}
                     {(memory.commitLimitBytes ?? 0) > 0
                       ? ` / ${formatBytes(memory.commitLimitBytes ?? 0)}`
@@ -357,7 +373,7 @@ export const OverviewView: React.FC<OverviewViewProps> = React.memo(({
                 )}
                 {((memory.pagedPoolBytes ?? 0) > 0 ||
                   (memory.nonPagedPoolBytes ?? 0) > 0) && (
-                  <span>
+                  <span className="truncate text-right">
                     Pool: {formatBytes(memory.pagedPoolBytes ?? 0)} P /{" "}
                     {formatBytes(memory.nonPagedPoolBytes ?? 0)} NP
                   </span>
@@ -370,6 +386,8 @@ export const OverviewView: React.FC<OverviewViewProps> = React.memo(({
         {/* GPU Card */}
         <motion.div
           variants={cardAnim}
+          whileHover={cardHover}
+          whileTap={cardTap}
           onClick={() => onOpenPerformanceMetric("gpu")}
           className="fluent-card p-4 flex flex-col justify-between gap-3 cursor-pointer overflow-hidden min-w-0"
         >
@@ -403,7 +421,7 @@ export const OverviewView: React.FC<OverviewViewProps> = React.memo(({
                 {gpu.usagePercent != null ? `${gpu.usagePercent.toFixed(0)}%` : "–"}
               </div>
               <div
-                className="text-[11px] tabular-nums mt-1 flex items-center justify-end gap-2"
+                className="text-[11px] tabular-nums mt-1 min-h-[16px] flex items-center justify-end gap-2 whitespace-nowrap"
                 style={{ color: "var(--text-muted)" }}
               >
                 {gpu.temperatureC != null && (
@@ -478,6 +496,8 @@ export const OverviewView: React.FC<OverviewViewProps> = React.memo(({
         {/* Disk Card */}
         <motion.div
           variants={cardAnim}
+          whileHover={cardHover}
+          whileTap={cardTap}
           onClick={() => onOpenPerformanceMetric("disk")}
           className="fluent-card p-4 flex flex-col justify-between gap-3 cursor-pointer overflow-hidden min-w-0"
         >
@@ -562,9 +582,9 @@ export const OverviewView: React.FC<OverviewViewProps> = React.memo(({
                   style={{ backgroundColor: "var(--bg-subtle)" }}
                 >
                   <div
-                    className="h-full rounded-full"
+                    className="h-full w-full rounded-full origin-left transition-transform duration-500"
                     style={{
-                      width: `${d.usagePercent}%`,
+                      transform: `scaleX(${Math.min(1, Math.max(0.01, d.usagePercent / 100))})`,
                       backgroundColor:
                         d.usagePercent > 90
                           ? "var(--accent-danger)"
@@ -580,6 +600,8 @@ export const OverviewView: React.FC<OverviewViewProps> = React.memo(({
         {/* Network Card */}
         <motion.div
           variants={cardAnim}
+          whileHover={cardHover}
+          whileTap={cardTap}
           onClick={() => onOpenPerformanceMetric("network")}
           className="fluent-card p-4 flex flex-col justify-between gap-3 cursor-pointer overflow-hidden min-w-0"
         >
@@ -618,7 +640,7 @@ export const OverviewView: React.FC<OverviewViewProps> = React.memo(({
 
           <div className="grid grid-cols-2 gap-2.5 tabular-nums">
             <div
-              className="p-2.5 rounded-xl border"
+              className="p-2.5 rounded-xl border min-w-0"
               style={{
                 backgroundColor: "var(--bg-subtle)",
                 borderColor: "var(--border-subtle)",
@@ -628,17 +650,17 @@ export const OverviewView: React.FC<OverviewViewProps> = React.memo(({
                 className="text-[10px] flex items-center gap-1"
                 style={{ color: "var(--text-muted)" }}
               >
-                <ArrowDown className="w-3 h-3 text-rose-500" /> Download
+                <ArrowDown className="w-3 h-3 text-rose-500 shrink-0" /> Download
               </div>
               <div
-                className="text-sm font-bold mt-0.5"
+                className="text-sm font-bold mt-0.5 whitespace-nowrap truncate"
                 style={{ color: "var(--accent-net)" }}
               >
                 {formatSpeed(network.rxBytesPerSec)}
               </div>
             </div>
             <div
-              className="p-2.5 rounded-xl border"
+              className="p-2.5 rounded-xl border min-w-0"
               style={{
                 backgroundColor: "var(--bg-subtle)",
                 borderColor: "var(--border-subtle)",
@@ -648,10 +670,10 @@ export const OverviewView: React.FC<OverviewViewProps> = React.memo(({
                 className="text-[10px] flex items-center gap-1"
                 style={{ color: "var(--text-muted)" }}
               >
-                <ArrowUp className="w-3 h-3 text-amber-500" /> Upload
+                <ArrowUp className="w-3 h-3 text-amber-500 shrink-0" /> Upload
               </div>
               <div
-                className="text-sm font-bold mt-0.5"
+                className="text-sm font-bold mt-0.5 whitespace-nowrap truncate"
                 style={{ color: "var(--accent-disk)" }}
               >
                 {formatSpeed(network.txBytesPerSec)}
@@ -660,7 +682,7 @@ export const OverviewView: React.FC<OverviewViewProps> = React.memo(({
           </div>
 
           <div
-            className="flex items-center justify-between text-[11px] tabular-nums"
+            className="flex items-center justify-between gap-2 text-[11px] tabular-nums"
             style={{ color: "var(--text-muted)" }}
           >
             <button
@@ -668,12 +690,12 @@ export const OverviewView: React.FC<OverviewViewProps> = React.memo(({
                 e.stopPropagation();
                 onNavigate("network");
               }}
-              className="hover:underline cursor-pointer"
+              className="hover:underline cursor-pointer whitespace-nowrap shrink-0"
               style={{ color: "var(--accent-net)" }}
             >
               {t("overview.openPorts", { count: system.listeningPortsCount })}
             </button>
-            <span>
+            <span className="truncate text-right">
               {t("overview.sessionRx", { val: formatBytes(network.totalRxBytes) })}
             </span>
           </div>
@@ -682,6 +704,8 @@ export const OverviewView: React.FC<OverviewViewProps> = React.memo(({
         {/* System / Battery & Quick Actions Card */}
         <motion.div
           variants={cardAnim}
+          whileHover={cardHover}
+          whileTap={cardTap}
           onClick={() => onNavigate("processes")}
           className="fluent-card p-4 flex flex-col justify-between gap-3 cursor-pointer overflow-hidden min-w-0"
         >
@@ -793,30 +817,28 @@ export const OverviewView: React.FC<OverviewViewProps> = React.memo(({
               {t("overview.allProcesses")}
             </button>
           </div>
-          <div className="flex flex-col gap-2">
+          <div className="flex flex-col gap-2 min-h-[272px]">
             {snapshot.latestPoint.topCpu.slice(0, 5).map((p) => {
               const cat = getCategoryMeta(p.category);
               return (
                 <button
                   key={p.pid}
                   onClick={() => onInspectPid(p.pid, p)}
-                  className="flex items-center justify-between gap-3 p-2 rounded-xl transition-colors hover:bg-[var(--bg-surface-hover)] cursor-pointer text-left"
+                  className="h-[48px] shrink-0 flex items-center justify-between gap-3 px-2.5 rounded-xl transition-colors hover:bg-[var(--bg-surface-hover)] cursor-pointer text-left"
                 >
                   <div className="flex items-center gap-2.5 min-w-0">
                     <span
                       className="w-2 h-2 rounded-full shrink-0"
                       style={{ backgroundColor: cat.color }}
                     />
-                    <div className="min-w-0">
+                    <div className="min-w-0 leading-tight">
                       <div className="text-xs font-semibold truncate">{p.name}</div>
-                      {p.subtitle && (
-                        <div
-                          className="text-[11px] truncate"
-                          style={{ color: "var(--text-muted)" }}
-                        >
-                          {p.subtitle}
-                        </div>
-                      )}
+                      <div
+                        className="text-[11px] truncate mt-0.5 tabular-nums"
+                        style={{ color: "var(--text-muted)" }}
+                      >
+                        {p.subtitle || `PID ${p.pid}`}
+                      </div>
                     </div>
                   </div>
                   <div className="flex items-center gap-3 shrink-0">
@@ -833,7 +855,7 @@ export const OverviewView: React.FC<OverviewViewProps> = React.memo(({
                       />
                     </div>
                     <span
-                      className="text-xs font-bold tabular-nums w-12 text-right"
+                      className="text-xs font-bold tabular-nums w-14 text-right whitespace-nowrap"
                       style={{ color: "var(--accent-cpu)" }}
                     >
                       {p.cpuPercent.toFixed(1)}%
@@ -863,7 +885,7 @@ export const OverviewView: React.FC<OverviewViewProps> = React.memo(({
               {t("overview.allProcesses")}
             </button>
           </div>
-          <div className="flex flex-col gap-2">
+          <div className="flex flex-col gap-2 min-h-[272px]">
             {snapshot.latestPoint.topRam.slice(0, 5).map((p) => {
               const cat = getCategoryMeta(p.category);
               const pct =
@@ -874,23 +896,21 @@ export const OverviewView: React.FC<OverviewViewProps> = React.memo(({
                 <button
                   key={p.pid}
                   onClick={() => onInspectPid(p.pid, p)}
-                  className="flex items-center justify-between gap-3 p-2 rounded-xl transition-colors hover:bg-[var(--bg-surface-hover)] cursor-pointer text-left"
+                  className="h-[48px] shrink-0 flex items-center justify-between gap-3 px-2.5 rounded-xl transition-colors hover:bg-[var(--bg-surface-hover)] cursor-pointer text-left"
                 >
                   <div className="flex items-center gap-2.5 min-w-0">
                     <span
                       className="w-2 h-2 rounded-full shrink-0"
                       style={{ backgroundColor: cat.color }}
                     />
-                    <div className="min-w-0">
+                    <div className="min-w-0 leading-tight">
                       <div className="text-xs font-semibold truncate">{p.name}</div>
-                      {p.subtitle && (
-                        <div
-                          className="text-[11px] truncate"
-                          style={{ color: "var(--text-muted)" }}
-                        >
-                          {p.subtitle}
-                        </div>
-                      )}
+                      <div
+                        className="text-[11px] truncate mt-0.5 tabular-nums"
+                        style={{ color: "var(--text-muted)" }}
+                      >
+                        {p.subtitle || `PID ${p.pid}`}
+                      </div>
                     </div>
                   </div>
                   <div className="flex items-center gap-3 shrink-0">
@@ -907,7 +927,7 @@ export const OverviewView: React.FC<OverviewViewProps> = React.memo(({
                       />
                     </div>
                     <span
-                      className="text-xs font-bold tabular-nums w-16 text-right"
+                      className="text-xs font-bold tabular-nums w-[72px] text-right whitespace-nowrap"
                       style={{ color: "var(--accent-ram)" }}
                     >
                       {formatBytes(p.memoryBytes)}

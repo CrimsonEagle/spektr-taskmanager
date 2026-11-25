@@ -120,6 +120,34 @@ body,
   border-color: var(--border-strong);
 }
 
+.fluent-card-interactive {
+  transition:
+    border-color 180ms ease,
+    background-color 180ms ease,
+    box-shadow 180ms ease,
+    transform 160ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.fluent-card-interactive:hover {
+  transform: translateY(-1.5px);
+}
+
+.fluent-card-interactive:active {
+  transform: translateY(0) scale(0.988);
+}
+
+/* Respect OS reduced-motion preference for CSS transitions & animations */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
 /* Fluent Duotone Glass icon badge polish (Stil A) */
 .duotone-glass-badge {
   border: 1px solid rgba(255, 255, 255, 0.14);

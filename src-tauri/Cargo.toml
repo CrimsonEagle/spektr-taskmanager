@@ -1,6 +1,6 @@
 [package]
 name = "spektr-taskmanager"
-version = "0.3.1"
+version = "0.3.2"
 description = "Spektr Taskmanager — Modern Windows Task Manager"
 authors = ["CrimsonEagle"]
 license = "MIT"

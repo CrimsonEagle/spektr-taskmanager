@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AnimatePresence, motion } from "framer-motion";
+import { AnimatePresence, motion, MotionConfig } from "framer-motion";
 import { CommandPalette } from "./components/CommandPalette";
 import { computeMiniHudHeight, MiniHud } from "./components/MiniHud";
 import { ProcessInspector } from "./components/ProcessInspector";
@@ -530,6 +530,7 @@ export function App() {
   }
 
   return (
+    <MotionConfig reducedMotion="user">
     <div className="h-screen w-screen flex flex-col overflow-hidden mica-canvas">
       <TitleBar
         snapshot={snapshot}
@@ -709,6 +710,7 @@ export function App() {
 
       <ToastContainer toasts={toasts} />
     </div>
+    </MotionConfig>
   );
 }
 

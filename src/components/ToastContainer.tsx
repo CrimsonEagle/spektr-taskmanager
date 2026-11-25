@@ -15,7 +15,7 @@ interface ToastContainerProps {
 export const ToastContainer: React.FC<ToastContainerProps> = React.memo(({ toasts }) => {
   return (
     <div className="fixed bottom-4 right-4 z-50 flex flex-col gap-2 pointer-events-none max-w-sm">
-      <AnimatePresence>
+      <AnimatePresence mode="popLayout">
         {toasts.map((t) => {
           const icon =
             t.kind === "success" ? (
@@ -31,10 +31,11 @@ export const ToastContainer: React.FC<ToastContainerProps> = React.memo(({ toast
           return (
             <motion.div
               key={t.id}
+              layout="position"
               initial={{ opacity: 0, y: 18, scale: 0.96 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, y: 8, scale: 0.96 }}
-              transition={{ duration: 0.18 }}
+              transition={{ duration: 0.18, ease: "easeOut" }}
               className="pointer-events-auto flex items-center gap-2.5 px-3.5 py-2.5 rounded-xl border text-xs font-medium"
               style={{
                 backgroundColor: "var(--bg-drawer)",

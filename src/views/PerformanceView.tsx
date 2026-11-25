@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AnimatePresence, motion } from "framer-motion";
 import {
   ArrowsDownUp as ArrowUpDown,
   CaretLeft,
@@ -980,7 +981,7 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
               <button
                 key={tab.id}
                 onClick={() => selectMetric(tab.id)}
-                className={`${tab.widthClass} shrink-0 px-3 py-2 rounded-xl border text-xs font-semibold flex items-center justify-between gap-1.5 transition-colors cursor-pointer tabular-nums`}
+                className={`${tab.widthClass} shrink-0 px-3 py-2 rounded-xl border text-xs font-semibold flex items-center justify-between gap-1.5 transition-[background-color,border-color,box-shadow,transform] duration-150 hover:-translate-y-0.5 active:scale-[0.98] cursor-pointer tabular-nums`}
                 style={{
                   backgroundColor: active
                     ? "var(--bg-surface-solid)"
@@ -1025,19 +1026,23 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
                   setWindowSec(w.sec);
                   setSelectedRange(null);
                 }}
-                className="px-2.5 py-1 rounded-lg font-medium cursor-pointer transition-colors"
+                className="relative px-2.5 py-1 rounded-lg font-medium cursor-pointer transition-colors"
                 style={{
-                  backgroundColor:
-                    windowSec === w.sec
-                      ? "var(--bg-surface-active)"
-                      : "transparent",
                   color:
                     windowSec === w.sec
                       ? "var(--text-primary)"
                       : "var(--text-muted)",
                 }}
               >
-                {w.label}
+                {windowSec === w.sec && (
+                  <motion.div
+                    layoutId="perfTimeWindowPill"
+                    transition={{ type: "spring", stiffness: 460, damping: 34 }}
+                    className="absolute inset-0 rounded-lg"
+                    style={{ backgroundColor: "var(--bg-surface-active)" }}
+                  />
+                )}
+                <span className="relative z-10">{w.label}</span>
               </button>
             ))}
           </div>
@@ -1045,7 +1050,7 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
           <div className="relative" ref={exportMenuRef}>
             <button
               onClick={() => setExportMenuOpen((v) => !v)}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border text-xs font-medium cursor-pointer hover:bg-[var(--bg-surface-hover)]"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border text-xs font-medium cursor-pointer transition-[background-color,transform] duration-150 hover:bg-[var(--bg-surface-hover)] active:scale-95"
               style={{
                 backgroundColor: "var(--bg-surface)",
                 borderColor: "var(--border-subtle)",
@@ -1056,10 +1061,17 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
               <Download className="w-3.5 h-3.5" />
               <span>Export</span>
             </button>
+            <AnimatePresence>
             {exportMenuOpen && (
-              <div
+              <motion.div
+                key="perf-export-menu"
+                initial={{ opacity: 0, scale: 0.95, y: -4 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.96, y: -2 }}
+                transition={{ duration: 0.13, ease: [0.16, 1, 0.3, 1] }}
                 className="absolute right-0 mt-1.5 w-44 rounded-xl border p-1 z-30 flex flex-col gap-0.5 text-xs"
                 style={{
+                  transformOrigin: "top right",
                   backgroundColor: "var(--bg-drawer)",
                   borderColor: "var(--border-strong)",
                   boxShadow: "var(--shadow-float)",
@@ -1083,8 +1095,9 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
                 >
                   {t("perf.export.json")}
                 </button>
-              </div>
+              </motion.div>
             )}
+            </AnimatePresence>
           </div>
         </div>
       </div>
@@ -1126,35 +1139,43 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
                 >
                   <button
                     onClick={() => setDiskChartMode("active")}
-                    className="px-2 py-0.5 rounded-md font-medium cursor-pointer transition-colors"
+                    className="relative px-2 py-0.5 rounded-md font-medium cursor-pointer transition-colors"
                     style={{
-                      backgroundColor:
-                        diskChartMode === "active"
-                          ? "var(--bg-surface-active)"
-                          : "transparent",
                       color:
                         diskChartMode === "active"
                           ? "var(--accent-disk)"
                           : "var(--text-muted)",
                     }}
                   >
-                    {t("perf.diskMode.active")}
+                    {diskChartMode === "active" && (
+                      <motion.div
+                        layoutId="perfDiskModePill"
+                        transition={{ type: "spring", stiffness: 460, damping: 34 }}
+                        className="absolute inset-0 rounded-md"
+                        style={{ backgroundColor: "var(--bg-surface-active)" }}
+                      />
+                    )}
+                    <span className="relative z-10">{t("perf.diskMode.active")}</span>
                   </button>
                   <button
                     onClick={() => setDiskChartMode("throughput")}
-                    className="px-2 py-0.5 rounded-md font-medium cursor-pointer transition-colors"
+                    className="relative px-2 py-0.5 rounded-md font-medium cursor-pointer transition-colors"
                     style={{
-                      backgroundColor:
-                        diskChartMode === "throughput"
-                          ? "var(--bg-surface-active)"
-                          : "transparent",
                       color:
                         diskChartMode === "throughput"
                           ? "var(--accent-disk)"
                           : "var(--text-muted)",
                     }}
                   >
-                    {t("perf.diskMode.throughput")}
+                    {diskChartMode === "throughput" && (
+                      <motion.div
+                        layoutId="perfDiskModePill"
+                        transition={{ type: "spring", stiffness: 460, damping: 34 }}
+                        className="absolute inset-0 rounded-md"
+                        style={{ backgroundColor: "var(--bg-surface-active)" }}
+                      />
+                    )}
+                    <span className="relative z-10">{t("perf.diskMode.throughput")}</span>
                   </button>
                 </div>
               )}
@@ -1580,20 +1601,18 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
                       )}
                 </span>
               </div>
-              {!isRangeMode && (
-                <div className="flex items-center justify-between gap-2">
-                  <span
-                    className="truncate"
-                    style={{ color: "var(--text-muted)" }}
-                  >
-                    Download / Upload
-                  </span>
-                  <span className="font-semibold shrink-0 whitespace-nowrap">
-                    ↓ {formatSpeed(snapshot.network.rxBytesPerSec)} · ↑{" "}
-                    {formatSpeed(snapshot.network.txBytesPerSec)}
-                  </span>
-                </div>
-              )}
+              <div className="flex items-center justify-between gap-2">
+                <span
+                  className="truncate"
+                  style={{ color: "var(--text-muted)" }}
+                >
+                  Download / Upload
+                </span>
+                <span className="font-semibold shrink-0 whitespace-nowrap">
+                  ↓ {formatSpeed(snapshot.network.rxBytesPerSec)} · ↑{" "}
+                  {formatSpeed(snapshot.network.txBytesPerSec)}
+                </span>
+              </div>
             </div>
           )}
 
@@ -1797,9 +1816,9 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
                         style={{ backgroundColor: "var(--bg-surface-solid)" }}
                       >
                         <div
-                          className="h-full rounded-full"
+                          className="h-full w-full rounded-full origin-left transition-transform duration-300 ease-out"
                           style={{
-                            width: `${barPct}%`,
+                            transform: `scaleX(${Math.min(1, Math.max(0.02, barPct / 100))})`,
                             backgroundColor: metricConfig.color,
                           }}
                         />
@@ -1869,7 +1888,7 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
                       type="button"
                       key={slotKey}
                       onClick={() => handleSwapGpuSeries(idx)}
-                      className="group p-2.5 rounded-xl border flex flex-col gap-1.5 text-left cursor-pointer transition-colors hover:bg-[var(--bg-surface-hover)] hover:border-[var(--accent-gpu)]"
+                      className="group p-2.5 rounded-xl border flex flex-col gap-1.5 text-left cursor-pointer fluent-card-interactive hover:bg-[var(--bg-surface-hover)] hover:border-[var(--accent-gpu)]"
                       style={{
                         backgroundColor: "var(--bg-subtle)",
                         borderColor: "var(--border-subtle)",
@@ -1998,20 +2017,20 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
               </h4>
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs tabular-nums">
                 <div
-                  className="p-2.5 rounded-xl border"
+                  className="p-2.5 rounded-xl border min-w-0"
                   style={{
                     backgroundColor: "var(--bg-subtle)",
                     borderColor: "var(--border-subtle)",
                   }}
                 >
                   <div
-                    className="text-[10px]"
+                    className="text-[10px] truncate"
                     style={{ color: "var(--text-muted)" }}
                   >
                     {t("perf.gpu.temp")}
                   </div>
-                  <div className="text-sm font-bold mt-0.5 flex items-center gap-1 text-emerald-500">
-                    <Thermometer className="w-3.5 h-3.5" />
+                  <div className="text-sm font-bold mt-0.5 flex items-center gap-1 text-emerald-500 whitespace-nowrap">
+                    <Thermometer className="w-3.5 h-3.5 shrink-0" />
                     {snapshot.gpu.temperatureC != null
                       ? `${snapshot.gpu.temperatureC.toFixed(0)} °C`
                       : "–"}
@@ -2019,27 +2038,27 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
                 </div>
 
                 <div
-                  className="p-2.5 rounded-xl border"
+                  className="p-2.5 rounded-xl border min-w-0"
                   style={{
                     backgroundColor: "var(--bg-subtle)",
                     borderColor: "var(--border-subtle)",
                   }}
                 >
                   <div
-                    className="text-[10px]"
+                    className="text-[10px] truncate"
                     style={{ color: "var(--text-muted)" }}
                   >
                     {t("perf.gpu.power")}
                   </div>
-                  <div className="text-sm font-bold mt-0.5 flex items-center gap-1 text-amber-500">
-                    <Zap className="w-3.5 h-3.5" />
+                  <div className="text-sm font-bold mt-0.5 flex items-center gap-1 text-amber-500 whitespace-nowrap">
+                    <Zap className="w-3.5 h-3.5 shrink-0" />
                     {snapshot.gpu.powerWatts != null
                       ? `${snapshot.gpu.powerWatts.toFixed(1)} W`
                       : "–"}
                   </div>
                   {snapshot.gpu.powerLimitWatts != null && (
                     <div
-                      className="text-[10px] mt-0.5"
+                      className="text-[10px] mt-0.5 whitespace-nowrap truncate"
                       style={{ color: "var(--text-muted)" }}
                     >
                       Limit {snapshot.gpu.powerLimitWatts.toFixed(0)} W
@@ -2048,20 +2067,20 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
                 </div>
 
                 <div
-                  className="p-2.5 rounded-xl border"
+                  className="p-2.5 rounded-xl border min-w-0"
                   style={{
                     backgroundColor: "var(--bg-subtle)",
                     borderColor: "var(--border-subtle)",
                   }}
                 >
                   <div
-                    className="text-[10px]"
+                    className="text-[10px] truncate"
                     style={{ color: "var(--text-muted)" }}
                   >
                     {t("perf.gpu.fan")}
                   </div>
-                  <div className="text-sm font-bold mt-0.5 flex items-center gap-1">
-                    <Fan className="w-3.5 h-3.5 text-sky-500" />
+                  <div className="text-sm font-bold mt-0.5 flex items-center gap-1 whitespace-nowrap">
+                    <Fan className="w-3.5 h-3.5 text-sky-500 shrink-0" />
                     {snapshot.gpu.fanSpeedPercent != null
                       ? `${snapshot.gpu.fanSpeedPercent}%`
                       : "–"}
@@ -2069,23 +2088,23 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
                 </div>
 
                 <div
-                  className="p-2.5 rounded-xl border"
+                  className="p-2.5 rounded-xl border min-w-0"
                   style={{
                     backgroundColor: "var(--bg-subtle)",
                     borderColor: "var(--border-subtle)",
                   }}
                 >
                   <div
-                    className="text-[10px]"
+                    className="text-[10px] truncate"
                     style={{ color: "var(--text-muted)" }}
                   >
                     {t("perf.gpu.clock")}
                   </div>
                   <div
-                    className="text-sm font-bold mt-0.5 flex items-center gap-1"
+                    className="text-sm font-bold mt-0.5 flex items-center gap-1 whitespace-nowrap"
                     style={{ color: "var(--accent-gpu)" }}
                   >
-                    <Gauge className="w-3.5 h-3.5" />
+                    <Gauge className="w-3.5 h-3.5 shrink-0" />
                     {snapshot.gpu.clockMhz != null
                       ? `${snapshot.gpu.clockMhz} MHz`
                       : "–"}
@@ -2093,19 +2112,19 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
                 </div>
 
                 <div
-                  className="p-2.5 rounded-xl border"
+                  className="p-2.5 rounded-xl border min-w-0"
                   style={{
                     backgroundColor: "var(--bg-subtle)",
                     borderColor: "var(--border-subtle)",
                   }}
                 >
                   <div
-                    className="text-[10px]"
+                    className="text-[10px] truncate"
                     style={{ color: "var(--text-muted)" }}
                   >
                     {t("perf.gpu.vramClock")}
                   </div>
-                  <div className="text-sm font-bold mt-0.5">
+                  <div className="text-sm font-bold mt-0.5 whitespace-nowrap">
                     {snapshot.gpu.memoryClockMhz != null
                       ? `${snapshot.gpu.memoryClockMhz} MHz`
                       : "–"}
@@ -2113,14 +2132,14 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
                 </div>
 
                 <div
-                  className="p-2.5 rounded-xl border"
+                  className="p-2.5 rounded-xl border min-w-0"
                   style={{
                     backgroundColor: "var(--bg-subtle)",
                     borderColor: "var(--border-subtle)",
                   }}
                 >
                   <div
-                    className="text-[10px]"
+                    className="text-[10px] truncate"
                     style={{ color: "var(--text-muted)" }}
                   >
                     {t("perf.gpu.vendor")}
@@ -2187,73 +2206,73 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
 
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs tabular-nums">
                 <div
-                  className="p-2.5 rounded-xl border"
+                  className="p-2.5 rounded-xl border min-w-0"
                   style={{
                     backgroundColor: "var(--bg-subtle)",
                     borderColor: "var(--border-subtle)",
                   }}
                 >
                   <div
-                    className="text-[10px]"
+                    className="text-[10px] truncate"
                     style={{ color: "var(--text-muted)" }}
                   >
                     {t("perf.disk.activeTime")}
                   </div>
                   <div
-                    className="text-sm font-bold mt-0.5"
+                    className="text-sm font-bold mt-0.5 whitespace-nowrap"
                     style={{ color: "var(--accent-disk)" }}
                   >
                     {(snapshot.disk.activePercent ?? 0).toFixed(0)}%
                   </div>
                 </div>
                 <div
-                  className="p-2.5 rounded-xl border"
+                  className="p-2.5 rounded-xl border min-w-0"
                   style={{
                     backgroundColor: "var(--bg-subtle)",
                     borderColor: "var(--border-subtle)",
                   }}
                 >
                   <div
-                    className="text-[10px]"
+                    className="text-[10px] truncate"
                     style={{ color: "var(--text-muted)" }}
                   >
                     {t("perf.disk.avgResponse")}
                   </div>
-                  <div className="text-sm font-bold mt-0.5">
+                  <div className="text-sm font-bold mt-0.5 whitespace-nowrap">
                     {(snapshot.disk.avgResponseMs ?? 0).toFixed(1)} ms
                   </div>
                 </div>
                 <div
-                  className="p-2.5 rounded-xl border"
+                  className="p-2.5 rounded-xl border min-w-0"
                   style={{
                     backgroundColor: "var(--bg-subtle)",
                     borderColor: "var(--border-subtle)",
                   }}
                 >
                   <div
-                    className="text-[10px]"
+                    className="text-[10px] truncate"
                     style={{ color: "var(--text-muted)" }}
                   >
                     {t("perf.disk.read")}
                   </div>
-                  <div className="text-sm font-bold mt-0.5 text-emerald-500">
+                  <div className="text-sm font-bold mt-0.5 text-emerald-500 whitespace-nowrap truncate">
                     {formatSpeed(snapshot.disk.readBytesPerSec)}
                   </div>
                 </div>
                 <div
-                  className="p-2.5 rounded-xl border"
+                  className="p-2.5 rounded-xl border min-w-0"
                   style={{
                     backgroundColor: "var(--bg-subtle)",
                     borderColor: "var(--border-subtle)",
                   }}
                 >
                   <div
-                    className="text-[10px]"
+                    className="text-[10px] truncate"
                     style={{ color: "var(--text-muted)" }}
                   >
                     {t("perf.disk.write")}
                   </div>
-                  <div className="text-sm font-bold mt-0.5 text-amber-500">
+                  <div className="text-sm font-bold mt-0.5 text-amber-500 whitespace-nowrap truncate">
                     {formatSpeed(snapshot.disk.writeBytesPerSec)}
                   </div>
                 </div>
@@ -2300,7 +2319,7 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
                             )}
                           </div>
                           <div
-                            className="text-[10px] mt-0.5"
+                            className="text-[10px] mt-0.5 truncate"
                             style={{ color: "var(--text-muted)" }}
                           >
                             {typeLabel} · {d.fileSystem} ·{" "}
@@ -2314,7 +2333,7 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
                         </div>
                         <div className="text-right shrink-0">
                           <div
-                            className="text-xs font-bold"
+                            className="text-xs font-bold whitespace-nowrap"
                             style={{ color: "var(--accent-disk)" }}
                           >
                             {t("perf.disk.activeInline", {
@@ -2322,7 +2341,7 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
                             })}
                           </div>
                           <div
-                            className="text-[10px]"
+                            className="text-[10px] whitespace-nowrap"
                             style={{ color: "var(--text-muted)" }}
                           >
                             {(d.avgResponseMs ?? 0).toFixed(1)} ms
@@ -2345,7 +2364,7 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
                           />
                         </div>
                         <span
-                          className="text-[10px] shrink-0 whitespace-nowrap"
+                          className="text-[10px] shrink-0 whitespace-nowrap min-w-[148px] text-right"
                           style={{ color: "var(--text-muted)" }}
                         >
                           R {formatSpeed(d.readBytesPerSec ?? 0)} · W{" "}
@@ -2413,7 +2432,7 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
                       {snapshot.gpu.name}
                     </div>
                   </div>
-                  <div className="text-[11px] mt-1.5 flex items-center gap-2 tabular-nums">
+                  <div className="text-[11px] mt-1.5 min-h-[16px] flex items-center gap-2 tabular-nums">
                     {snapshot.gpu.temperatureC != null && (
                       <span className="inline-flex items-center gap-0.5 text-emerald-500 font-medium">
                         <Thermometer className="w-3 h-3" />
@@ -2533,11 +2552,11 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
                           : `${coreName}: ${val.toFixed(0)}%`
                       }
                     >
-                      <div className="flex items-center justify-between text-[11px] tabular-nums mb-1 gap-1">
-                        <span style={{ color: "var(--text-muted)" }}>
+                      <div className="flex items-center justify-between text-[11px] tabular-nums mb-1 gap-1 whitespace-nowrap">
+                        <span className="truncate" style={{ color: "var(--text-muted)" }}>
                           {coreName}
                         </span>
-                        <span className="flex items-center gap-1.5">
+                        <span className="flex items-center gap-1.5 shrink-0">
                           {coreMhz != null && coreMhz > 0 && (
                             <span
                               className="text-[10px]"
@@ -2546,7 +2565,7 @@ export const PerformanceView: React.FC<PerformanceViewProps> = React.memo(({
                               {(coreMhz / 1000).toFixed(1)}G
                             </span>
                           )}
-                          <span className="font-semibold">
+                          <span className="font-semibold w-7 text-right">
                             {val.toFixed(0)}%
                           </span>
                         </span>

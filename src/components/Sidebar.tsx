@@ -1,5 +1,5 @@
 import React from "react";
-import { motion } from "framer-motion";
+import { AnimatePresence, motion } from "framer-motion";
 import {
   Cpu,
   Flame,
@@ -119,7 +119,7 @@ export const Sidebar: React.FC<SidebarProps> = React.memo(({
               </span>
               {item.badge != null && (
                 <span
-                  className="relative z-10 text-[11px] px-1.5 py-0.5 rounded-md tabular-nums font-semibold"
+                  className="relative z-10 text-[11px] px-1.5 py-0.5 rounded-md tabular-nums font-semibold min-w-[28px] text-center"
                   style={{
                     backgroundColor: isActive
                       ? "var(--bg-surface-solid)"
@@ -199,52 +199,70 @@ export const Sidebar: React.FC<SidebarProps> = React.memo(({
                   key={p.id}
                   onClick={() => onApplyProfile(p.id)}
                   title={p.tooltip}
-                  className="flex flex-col items-center gap-1 py-1.5 px-1 rounded-lg text-[11px] font-medium transition-colors cursor-pointer"
+                  className="relative flex flex-col items-center gap-1 py-1.5 px-1 rounded-lg text-[11px] font-medium transition-colors cursor-pointer active:scale-[0.97]"
                   style={{
-                    backgroundColor: selected
-                      ? "var(--bg-surface-active)"
-                      : "transparent",
                     color: selected ? p.color : "var(--text-secondary)",
-                    border: selected
-                      ? `1px solid ${p.color}44`
-                      : "1px solid transparent",
                   }}
                 >
-                  {p.icon}
-                  <span>{p.label}</span>
+                  {selected && (
+                    <motion.div
+                      layoutId="sidebarProfilePill"
+                      transition={{ type: "spring", stiffness: 460, damping: 34 }}
+                      className="absolute inset-0 rounded-lg"
+                      style={{
+                        backgroundColor: "var(--bg-surface-active)",
+                        border: `1px solid ${p.color}44`,
+                      }}
+                    />
+                  )}
+                  <span className="relative z-10 flex flex-col items-center gap-1">
+                    {p.icon}
+                    <span>{p.label}</span>
+                  </span>
                 </button>
               );
             })}
           </div>
 
-          {activeProfile !== "normal" && snapshot && (
-            <div
-              className="mt-2 pt-2 border-t text-[10px] leading-snug tabular-nums flex items-center justify-between"
-              style={{
-                borderColor: "var(--border-subtle)",
-                color: "var(--text-muted)",
-              }}
-            >
-              {activeProfile === "gaming" ? (
-                <span>
-                  {t("sidebar.profile.boostedSummary", {
-                    boosted: snapshot.system.profileBoostedCount,
-                    throttled: Math.max(
-                      0,
-                      snapshot.system.profileManagedCount -
-                        snapshot.system.profileBoostedCount
-                    ),
-                  })}
-                </span>
-              ) : (
-                <span>
-                  {t("sidebar.profile.ecoSummary", {
-                    count: snapshot.system.profileManagedCount,
-                  })}
-                </span>
-              )}
-            </div>
-          )}
+          <AnimatePresence initial={false}>
+            {activeProfile !== "normal" && snapshot && (
+              <motion.div
+                key="profile-summary"
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: "auto", opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+                className="overflow-hidden"
+              >
+                <div
+                  className="mt-2 pt-2 border-t text-[10px] leading-snug tabular-nums flex items-center justify-between"
+                  style={{
+                    borderColor: "var(--border-subtle)",
+                    color: "var(--text-muted)",
+                  }}
+                >
+                  {activeProfile === "gaming" ? (
+                    <span>
+                      {t("sidebar.profile.boostedSummary", {
+                        boosted: snapshot.system.profileBoostedCount,
+                        throttled: Math.max(
+                          0,
+                          snapshot.system.profileManagedCount -
+                            snapshot.system.profileBoostedCount
+                        ),
+                      })}
+                    </span>
+                  ) : (
+                    <span>
+                      {t("sidebar.profile.ecoSummary", {
+                        count: snapshot.system.profileManagedCount,
+                      })}
+                    </span>
+                  )}
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
 
         {/* Host & Uptime compact footer */}
@@ -264,15 +282,15 @@ export const Sidebar: React.FC<SidebarProps> = React.memo(({
               <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
             </div>
             <div
-              className="flex items-center justify-between tabular-nums"
+              className="flex items-center justify-between gap-2 tabular-nums"
               style={{ color: "var(--text-muted)" }}
             >
-              <span>
+              <span className="truncate">
                 {t("app.uptime", {
                   duration: formatDuration(snapshot.system.uptimeSeconds, language),
                 })}
               </span>
-              <span className="font-semibold">v{APP_VERSION}</span>
+              <span className="font-semibold shrink-0">v{APP_VERSION}</span>
             </div>
           </div>
         )}

@@ -1019,6 +1019,7 @@ fn setup_tray(app: &AppHandle, lang: &str) -> tauri::Result<()> {
 
     let mut builder = TrayIconBuilder::with_id("main-tray")
         .menu(&menu)
+        .show_menu_on_left_click(false)
         .tooltip("Spektr Taskmanager")
         .on_menu_event(|app, event| match event.id.as_ref() {
             "show" => {

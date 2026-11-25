@@ -1,10 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AnimatePresence, motion } from "framer-motion";
 import {
   ArrowClockwise as RotateCw,
   ArrowDown,
   ArrowsInSimple as Minimize2,
   ArrowUp,
-  CaretDown as ChevronDown,
   CaretRight as ChevronRight,
   Crosshair,
   DownloadSimple as Download,
@@ -226,7 +226,7 @@ const ProcessRowItem: React.FC<ProcessRowItemProps> = React.memo(
             maxValue={maxHist}
           />
           <span
-            className="font-semibold w-11 text-right"
+            className="font-semibold w-12 text-right whitespace-nowrap"
             style={{
               color:
                 proc.cpuPercent > 40
@@ -357,11 +357,11 @@ const GroupRowItem: React.FC<GroupRowItemProps> = React.memo(
       >
         <div className="flex items-center gap-2 min-w-0">
           <span style={{ color: "var(--text-muted)" }}>
-            {expanded ? (
-              <ChevronDown className="w-3.5 h-3.5" />
-            ) : (
-              <ChevronRight className="w-3.5 h-3.5" />
-            )}
+            <ChevronRight
+              className={`w-3.5 h-3.5 transition-transform duration-150 ${
+                expanded ? "rotate-90" : ""
+              }`}
+            />
           </span>
           <div
             className="w-7 h-7 rounded-lg flex items-center justify-center font-bold text-[10px] shrink-0 overflow-hidden"
@@ -987,7 +987,7 @@ export const ProcessesView: React.FC<ProcessesViewProps> = React.memo(
 
             <button
               onClick={() => setManualFreeze((f) => !f)}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-medium border cursor-pointer transition-all"
+              className="w-[122px] justify-center whitespace-nowrap shrink-0 flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-medium border cursor-pointer transition-all"
               style={{
                 backgroundColor: isOrderFrozen
                   ? "var(--accent-cpu-soft)"
@@ -1002,9 +1002,9 @@ export const ProcessesView: React.FC<ProcessesViewProps> = React.memo(
               title={t("processes.freezeTooltip")}
             >
               {isOrderFrozen ? (
-                <Lock className="w-3.5 h-3.5" />
+                <Lock className="w-3.5 h-3.5 shrink-0" />
               ) : (
-                <Unlock className="w-3.5 h-3.5" />
+                <Unlock className="w-3.5 h-3.5 shrink-0" />
               )}
               <span>
                 {manualFreeze
@@ -1033,18 +1033,26 @@ export const ProcessesView: React.FC<ProcessesViewProps> = React.memo(
                 <button
                   key={m.id}
                   onClick={() => setViewMode(m.id)}
-                  className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-colors cursor-pointer"
+                  className="relative flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition-colors cursor-pointer"
                   style={{
-                    backgroundColor:
-                      viewMode === m.id ? "var(--bg-surface-active)" : "transparent",
                     color:
                       viewMode === m.id
                         ? "var(--text-primary)"
                         : "var(--text-muted)",
                   }}
                 >
-                  {m.icon}
-                  <span className="hidden sm:inline">{m.label}</span>
+                  {viewMode === m.id && (
+                    <motion.div
+                      layoutId="processesViewModePill"
+                      transition={{ type: "spring", stiffness: 460, damping: 34 }}
+                      className="absolute inset-0 rounded-lg"
+                      style={{ backgroundColor: "var(--bg-surface-active)" }}
+                    />
+                  )}
+                  <span className="relative z-10 flex items-center gap-1.5">
+                    {m.icon}
+                    <span className="hidden sm:inline">{m.label}</span>
+                  </span>
                 </button>
               ))}
             </div>
@@ -1074,7 +1082,7 @@ export const ProcessesView: React.FC<ProcessesViewProps> = React.memo(
                   frozenGroupOrderRef.current = [];
                   setCategoryFilter(pill.id);
                 }}
-                className="px-2.5 py-1 rounded-full text-xs font-medium transition-all cursor-pointer border"
+                className="px-2.5 py-1 rounded-full text-xs font-medium transition-all cursor-pointer border tabular-nums"
                 style={{
                   backgroundColor: active ? `${pill.color}22` : "var(--bg-surface)",
                   borderColor: active ? `${pill.color}66` : "var(--border-subtle)",
@@ -1228,13 +1236,20 @@ export const ProcessesView: React.FC<ProcessesViewProps> = React.memo(
         </div>
 
         {/* Right-click Context Menu */}
+        <AnimatePresence>
         {contextMenu && (
-          <div
+          <motion.div
+            key="process-context-menu"
             ref={contextMenuRef}
+            initial={{ opacity: 0, scale: 0.95, y: -4 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.96, y: -2 }}
+            transition={{ duration: 0.13, ease: [0.16, 1, 0.3, 1] }}
             className="fixed z-50 w-54 rounded-xl border p-1.5 text-xs flex flex-col gap-0.5 select-none"
             style={{
               left: contextMenu.x,
               top: contextMenu.y,
+              transformOrigin: "top left",
               backgroundColor: "var(--bg-drawer)",
               borderColor: "var(--border-strong)",
               boxShadow: "var(--shadow-float)",
@@ -1410,8 +1425,9 @@ export const ProcessesView: React.FC<ProcessesViewProps> = React.memo(
               <Skull className="w-3.5 h-3.5" />
               <span>{t("processes.ctx.killTree")}</span>
             </button>
-          </div>
+          </motion.div>
         )}
+        </AnimatePresence>
       </div>
     );
   }

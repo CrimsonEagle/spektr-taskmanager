@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { motion } from "framer-motion";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import {
   ArrowClockwise as RotateCw,
@@ -470,16 +471,23 @@ export const SystemToolsView: React.FC<SystemToolsViewProps> = React.memo(
                 <button
                   key={tabItem.id}
                   onClick={() => setSubTab(tabItem.id)}
-                  className="flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer"
+                  className="relative flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer"
                   style={{
-                    backgroundColor: active
-                      ? "var(--bg-surface-active)"
-                      : "transparent",
                     color: active ? tabItem.color : "var(--text-secondary)",
                   }}
                 >
-                  {tabItem.icon}
-                  <span>{tabItem.label}</span>
+                  {active && (
+                    <motion.div
+                      layoutId="toolsSubTabPill"
+                      transition={{ type: "spring", stiffness: 460, damping: 34 }}
+                      className="absolute inset-0 rounded-lg"
+                      style={{ backgroundColor: "var(--bg-surface-active)" }}
+                    />
+                  )}
+                  <span className="relative z-10 flex items-center gap-2">
+                    {tabItem.icon}
+                    <span>{tabItem.label}</span>
+                  </span>
                 </button>
               );
             })}
@@ -494,18 +502,34 @@ export const SystemToolsView: React.FC<SystemToolsViewProps> = React.memo(
                     ? loadServices
                     : loadRules
               }
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-medium cursor-pointer hover:bg-[var(--bg-surface-hover)]"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-medium cursor-pointer transition-[background-color,transform] duration-150 hover:bg-[var(--bg-surface-hover)] active:scale-95"
               style={{
                 backgroundColor: "var(--bg-surface)",
                 borderColor: "var(--border-subtle)",
                 color: "var(--text-secondary)",
               }}
             >
-              <RefreshCw className="w-3.5 h-3.5" />
+              <RefreshCw
+                className={`w-3.5 h-3.5 ${
+                  (subTab === "startup" && startupLoading) ||
+                  (subTab === "services" && servicesLoading) ||
+                  (subTab === "rules" && rulesLoading)
+                    ? "animate-spin"
+                    : ""
+                }`}
+              />
               {t("tools.refresh")}
             </button>
           )}
         </div>
+
+        <motion.div
+          key={subTab}
+          initial={{ opacity: 0, y: 5 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.15, ease: "easeOut" }}
+          className="flex-1 flex flex-col min-h-0"
+        >
 
         {/* TAB 1: STARTUP APPS */}
         {subTab === "startup" && (
@@ -545,7 +569,7 @@ export const SystemToolsView: React.FC<SystemToolsViewProps> = React.memo(
                   return (
                     <div
                       key={item.id}
-                      className="grid grid-cols-[minmax(180px,1fr)_minmax(220px,1.5fr)_130px_86px] items-center gap-3 px-4 py-2.5 border-b text-xs hover:bg-[var(--bg-surface-hover)] transition-colors"
+                      className="h-[44px] box-border grid grid-cols-[minmax(180px,1fr)_minmax(220px,1.5fr)_130px_86px] items-center gap-3 px-4 border-b text-xs hover:bg-[var(--bg-surface-hover)] transition-colors"
                       style={{ borderColor: "var(--border-subtle)" }}
                     >
                       <div className="font-semibold truncate">{item.name}</div>
@@ -556,9 +580,9 @@ export const SystemToolsView: React.FC<SystemToolsViewProps> = React.memo(
                       >
                         {item.command}
                       </div>
-                      <div className="flex items-center gap-1 flex-wrap">
+                      <div className="flex items-center gap-1 overflow-hidden">
                         <span
-                          className="text-[10px] font-semibold px-2 py-0.5 rounded-full"
+                          className="text-[10px] font-semibold px-2 py-0.5 rounded-full whitespace-nowrap truncate"
                           style={{
                             backgroundColor: isTaskScheduler
                               ? "var(--accent-ram-soft)"
@@ -581,14 +605,11 @@ export const SystemToolsView: React.FC<SystemToolsViewProps> = React.memo(
                         <button
                           disabled={isTaskScheduler}
                           onClick={() => handleToggleStartup(item)}
-                          className="w-10 h-5.5 rounded-full p-0.5 transition-colors flex items-center cursor-pointer disabled:opacity-45 disabled:cursor-not-allowed"
+                          className="w-10 h-5.5 rounded-full p-0.5 transition-colors duration-200 flex items-center cursor-pointer disabled:opacity-45 disabled:cursor-not-allowed"
                           style={{
                             backgroundColor: item.enabled
                               ? "var(--accent-gpu)"
                               : "var(--border-strong)",
-                            justifyContent: item.enabled
-                              ? "flex-end"
-                              : "flex-start",
                           }}
                           title={
                             isTaskScheduler
@@ -598,7 +619,14 @@ export const SystemToolsView: React.FC<SystemToolsViewProps> = React.memo(
                                 : t("tools.startup.enable")
                           }
                         >
-                          <span className="w-4.5 h-4.5 rounded-full bg-white shadow-sm block" />
+                          <span
+                            className="w-4.5 h-4.5 rounded-full bg-white shadow-sm block transition-transform duration-200 ease-out"
+                            style={{
+                              transform: item.enabled
+                                ? "translateX(18px)"
+                                : "translateX(0px)",
+                            }}
+                          />
                         </button>
                       </div>
                     </div>
@@ -659,7 +687,7 @@ export const SystemToolsView: React.FC<SystemToolsViewProps> = React.memo(
                   <button
                     key={f.id}
                     onClick={() => setSvcFilter(f.id)}
-                    className="px-2.5 py-1 rounded-full text-xs font-medium border cursor-pointer"
+                    className="px-2.5 py-1 rounded-full text-xs font-medium border cursor-pointer tabular-nums"
                     style={{
                       backgroundColor:
                         svcFilter === f.id
@@ -717,7 +745,7 @@ export const SystemToolsView: React.FC<SystemToolsViewProps> = React.memo(
                     return (
                       <div
                         key={svc.name}
-                        className="group grid grid-cols-[minmax(180px,1.4fr)_minmax(120px,1fr)_86px_80px_118px_90px] items-center gap-2.5 px-4 py-2 border-b text-xs hover:bg-[var(--bg-surface-hover)] transition-colors"
+                        className="group h-[44px] box-border grid grid-cols-[minmax(180px,1.4fr)_minmax(120px,1fr)_86px_80px_118px_90px] items-center gap-2.5 px-4 border-b text-xs hover:bg-[var(--bg-surface-hover)] transition-colors"
                         style={{ borderColor: "var(--border-subtle)" }}
                       >
                         <div className="font-medium truncate">
@@ -755,7 +783,7 @@ export const SystemToolsView: React.FC<SystemToolsViewProps> = React.memo(
                         </div>
                         <div>
                           <span
-                            className="text-[10px] font-semibold px-2 py-0.5 rounded-full"
+                            className="text-[10px] font-semibold px-2 py-0.5 rounded-full whitespace-nowrap"
                             style={{
                               backgroundColor:
                                 svc.status === "Aktiv"
@@ -911,7 +939,9 @@ export const SystemToolsView: React.FC<SystemToolsViewProps> = React.memo(
                     handlePickAndCheckFile();
                   }
                 }}
-                className="rounded-xl border-2 border-dashed px-4 py-5 text-xs flex items-center justify-center gap-2.5 transition-colors cursor-pointer hover:bg-[var(--bg-surface-hover)]"
+                className={`rounded-xl border-2 border-dashed px-4 py-5 text-xs flex items-center justify-center gap-2.5 transition-[background-color,border-color,color,transform] duration-150 cursor-pointer hover:bg-[var(--bg-surface-hover)] ${
+                  isDraggingFile ? "scale-[1.01]" : ""
+                }`}
                 style={{
                   borderColor: isDraggingFile
                     ? "var(--accent-net)"
@@ -1006,7 +1036,12 @@ export const SystemToolsView: React.FC<SystemToolsViewProps> = React.memo(
             </div>
 
             {lockResults !== null && (
-              <div className="flex flex-col gap-2">
+              <motion.div
+                initial={{ opacity: 0, y: 6 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.16, ease: "easeOut" }}
+                className="flex flex-col gap-2"
+              >
                 {lockResults.length === 0 ? (
                   <div
                     className="p-4 rounded-xl border flex items-center gap-2.5 text-xs font-medium"
@@ -1084,7 +1119,7 @@ export const SystemToolsView: React.FC<SystemToolsViewProps> = React.memo(
                     ))}
                   </>
                 )}
-              </div>
+              </motion.div>
             )}
           </div>
         )}
@@ -1360,14 +1395,11 @@ export const SystemToolsView: React.FC<SystemToolsViewProps> = React.memo(
                         </button>
                         <button
                           onClick={() => handleToggleRule(rule)}
-                          className="w-9 h-5 rounded-full p-0.5 transition-colors cursor-pointer flex items-center"
+                          className="w-9 h-5 rounded-full p-0.5 transition-colors duration-200 cursor-pointer flex items-center"
                           style={{
                             backgroundColor: rule.enabled
                               ? "var(--accent-gpu)"
                               : "var(--border-strong)",
-                            justifyContent: rule.enabled
-                              ? "flex-end"
-                              : "flex-start",
                           }}
                           title={
                             rule.enabled
@@ -1375,7 +1407,14 @@ export const SystemToolsView: React.FC<SystemToolsViewProps> = React.memo(
                               : t("tools.rules.enable")
                           }
                         >
-                          <span className="w-4 h-4 rounded-full bg-white shadow-sm block" />
+                          <span
+                            className="w-4 h-4 rounded-full bg-white shadow-sm block transition-transform duration-200 ease-out"
+                            style={{
+                              transform: rule.enabled
+                                ? "translateX(16px)"
+                                : "translateX(0px)",
+                            }}
+                          />
                         </button>
                         <button
                           onClick={() => handleDeleteRule(rule)}
@@ -1392,6 +1431,7 @@ export const SystemToolsView: React.FC<SystemToolsViewProps> = React.memo(
             </div>
           </div>
         )}
+        </motion.div>
       </div>
     );
   }

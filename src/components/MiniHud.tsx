@@ -259,19 +259,19 @@ export const MiniHud: React.FC<MiniHudProps> = React.memo(
                 >
                   {t("hud.network")}
                 </span>
-                <div className="flex items-center gap-2 truncate">
+                <div className="flex items-center gap-2 overflow-hidden whitespace-nowrap">
                   <span
-                    className="flex items-center gap-0.5 font-medium"
+                    className="flex items-center gap-0.5 font-medium whitespace-nowrap shrink-0"
                     style={{ color: "var(--accent-net)" }}
                   >
-                    <ArrowDown className="w-2.5 h-2.5" />
+                    <ArrowDown className="w-2.5 h-2.5 shrink-0" />
                     {formatSpeed(snapshot?.network.rxBytesPerSec ?? 0)}
                   </span>
                   <span
-                    className="flex items-center gap-0.5 font-medium"
+                    className="flex items-center gap-0.5 font-medium whitespace-nowrap shrink-0"
                     style={{ color: "var(--accent-disk)" }}
                   >
-                    <ArrowUp className="w-2.5 h-2.5" />
+                    <ArrowUp className="w-2.5 h-2.5 shrink-0" />
                     {formatSpeed(snapshot?.network.txBytesPerSec ?? 0)}
                   </span>
                 </div>
@@ -283,7 +283,7 @@ export const MiniHud: React.FC<MiniHudProps> = React.memo(
         {/* Footer: Top Process & Battery */}
         {showFooter && (
           <div
-            className="flex items-center justify-between gap-2 text-[11px] tabular-nums px-2.5 py-1.5 rounded-xl border shrink-0"
+            className="h-[30px] flex items-center justify-between gap-2 text-[11px] tabular-nums px-2.5 rounded-xl border shrink-0 overflow-hidden"
             style={{
               backgroundColor: "var(--bg-surface)",
               borderColor: "var(--border-subtle)",

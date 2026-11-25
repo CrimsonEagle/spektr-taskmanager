@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { AnimatePresence, motion } from "framer-motion";
 import { useI18n } from "../../i18n";
 import { formatTimeShort } from "../../lib/format";
 import { HistoryPoint, TimeRange } from "../../types/telemetry";
@@ -668,8 +669,14 @@ export const InteractiveAreaChart: React.FC<InteractiveAreaChartProps> =
           </svg>
 
           {/* Floating readout pill */}
+          <AnimatePresence>
           {pillInfo && (
-            <div
+            <motion.div
+              key="chart-readout-pill"
+              initial={{ opacity: 0, y: -3, scale: 0.97 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: -2, scale: 0.97 }}
+              transition={{ duration: 0.12, ease: "easeOut" }}
               className="pointer-events-none absolute top-2 right-3 px-2.5 py-1 rounded-lg text-xs font-medium tabular-nums flex items-center gap-2 border whitespace-nowrap"
               style={{
                 backgroundColor: "var(--bg-drawer)",
@@ -694,8 +701,9 @@ export const InteractiveAreaChart: React.FC<InteractiveAreaChartProps> =
                   {pillInfo.badge}
                 </span>
               )}
-            </div>
+            </motion.div>
           )}
+          </AnimatePresence>
         </div>
       );
     }

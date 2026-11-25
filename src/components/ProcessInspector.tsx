@@ -4,7 +4,6 @@ import {
   ArrowClockwise as RotateCw,
   ArrowsInSimple as Minimize2,
   ArrowSquareOut as ExternalLink,
-  CaretDown as ChevronDown,
   CaretRight as ChevronRight,
   Copy,
   Cpu,
@@ -60,6 +59,10 @@ interface ProcessInspectorProps {
 }
 
 type InspectorTab = "overview" | "security" | "modules" | "env";
+
+const INSPECTOR_WIDTH = 410;
+const INSPECTOR_EASE_OPEN: [number, number, number, number] = [0.22, 1, 0.36, 1];
+const INSPECTOR_EASE_CLOSE: [number, number, number, number] = [0.4, 0, 0.2, 1];
 
 function isBitSet(mask: number, bitIndex: number): boolean {
   return (BigInt(mask) & (1n << BigInt(bitIndex))) !== 0n;
@@ -425,21 +428,40 @@ export const ProcessInspector: React.FC<ProcessInspectorProps> = React.memo(
     }, [process]);
 
     return (
-      <AnimatePresence>
+      <AnimatePresence initial={false}>
         {process && cat && (
-          <motion.aside
+          <motion.div
             key="inspector"
-            initial={{ x: 420, opacity: 0.4 }}
-            animate={{ x: 0, opacity: 1 }}
-            exit={{ x: 420, opacity: 0 }}
-            transition={{ type: "spring", stiffness: 380, damping: 34 }}
-            className="w-[410px] shrink-0 h-full border-l flex flex-col overflow-hidden z-20"
+            initial={{ width: 0, opacity: 0.25 }}
+            animate={{
+              width: INSPECTOR_WIDTH,
+              opacity: 1,
+              transition: {
+                width: { duration: 0.24, ease: INSPECTOR_EASE_OPEN },
+                opacity: { duration: 0.16, ease: "easeOut" },
+              },
+            }}
+            exit={{
+              width: 0,
+              opacity: 0,
+              transition: {
+                width: { duration: 0.21, ease: INSPECTOR_EASE_CLOSE },
+                opacity: { duration: 0.18, ease: INSPECTOR_EASE_CLOSE },
+              },
+            }}
+            className="relative shrink-0 h-full overflow-hidden z-20"
             style={{
-              backgroundColor: "var(--bg-drawer)",
-              borderColor: "var(--border-strong)",
               boxShadow: "var(--shadow-float)",
             }}
           >
+            <aside
+              className="h-full border-l flex flex-col overflow-hidden"
+              style={{
+                width: INSPECTOR_WIDTH,
+                backgroundColor: "var(--bg-drawer)",
+                borderColor: "var(--border-strong)",
+              }}
+            >
             {/* Header */}
             <div
               className="p-4 border-b flex items-start justify-between gap-3"
@@ -521,24 +543,38 @@ export const ProcessInspector: React.FC<ProcessInspectorProps> = React.memo(
                   <button
                     key={tabDef.id}
                     onClick={() => setTab(tabDef.id)}
-                    className="py-1.5 px-1.5 rounded-lg cursor-pointer transition-colors truncate"
+                    className="relative py-1.5 px-1.5 rounded-lg cursor-pointer transition-colors truncate"
                     style={{
-                      backgroundColor: active
-                        ? "var(--bg-surface-solid)"
-                        : "transparent",
                       color: active
                         ? "var(--accent-cpu)"
                         : "var(--text-secondary)",
                     }}
                   >
-                    {tabDef.label}
+                    {active && (
+                      <motion.div
+                        layoutId="inspectorActiveTab"
+                        transition={{ type: "spring", stiffness: 460, damping: 34 }}
+                        className="absolute inset-0 rounded-lg"
+                        style={{
+                          backgroundColor: "var(--bg-surface-solid)",
+                        }}
+                      />
+                    )}
+                    <span className="relative z-10">{tabDef.label}</span>
                   </button>
                 );
               })}
             </div>
 
             {/* Scrollable Tab Content */}
-            <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-4">
+            <div className="flex-1 overflow-y-auto p-4">
+              <motion.div
+                key={tab}
+                initial={{ opacity: 0, y: 4 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.14, ease: "easeOut" }}
+                className="flex flex-col gap-4"
+              >
               {/* TAB 1: OVERVIEW */}
               {tab === "overview" && (
                 <>
@@ -574,7 +610,7 @@ export const ProcessInspector: React.FC<ProcessInspectorProps> = React.memo(
                   {/* Live Metrics Row */}
                   <div className="grid grid-cols-2 gap-2.5">
                     <div
-                      className="p-3 rounded-xl border"
+                      className="p-3 rounded-xl border min-w-0"
                       style={{
                         backgroundColor: "var(--bg-subtle)",
                         borderColor: "var(--border-subtle)",
@@ -584,18 +620,18 @@ export const ProcessInspector: React.FC<ProcessInspectorProps> = React.memo(
                         className="text-[11px] font-medium mb-1 flex items-center justify-between gap-1"
                         style={{ color: "var(--text-muted)" }}
                       >
-                        <span>
+                        <span className="truncate">
                           {isExited
                             ? t("inspector.lastCpu")
                             : t("inspector.liveCpu")}
                         </span>
-                        <span className="tabular-nums text-[10px]">
+                        <span className="tabular-nums text-[10px] shrink-0 whitespace-nowrap">
                           {t("inspector.avg30s", { val: cpuAvg30s.toFixed(1) })}
                         </span>
                       </div>
                       <div className="flex items-end justify-between gap-2">
                         <span
-                          className="text-lg font-bold tabular-nums"
+                          className="text-lg font-bold tabular-nums whitespace-nowrap"
                           style={{ color: "var(--accent-cpu)" }}
                         >
                           {process.cpuPercent.toFixed(1)}%
@@ -611,26 +647,26 @@ export const ProcessInspector: React.FC<ProcessInspectorProps> = React.memo(
                     </div>
 
                     <div
-                      className="p-3 rounded-xl border"
+                      className="p-3 rounded-xl border min-w-0"
                       style={{
                         backgroundColor: "var(--bg-subtle)",
                         borderColor: "var(--border-subtle)",
                       }}
                     >
                       <div
-                        className="text-[11px] font-medium mb-1"
+                        className="text-[11px] font-medium mb-1 truncate"
                         style={{ color: "var(--text-muted)" }}
                       >
                         {t("inspector.memory")}
                       </div>
                       <div
-                        className="text-lg font-bold tabular-nums"
+                        className="text-lg font-bold tabular-nums whitespace-nowrap truncate"
                         style={{ color: "var(--accent-ram)" }}
                       >
                         {formatBytes(process.memoryBytes)}
                       </div>
                       <div
-                        className="text-[11px] tabular-nums mt-0.5"
+                        className="text-[11px] tabular-nums mt-0.5 whitespace-nowrap truncate"
                         style={{ color: "var(--text-muted)" }}
                       >
                         {t("inspector.runtime", {
@@ -868,14 +904,23 @@ export const ProcessInspector: React.FC<ProcessInspectorProps> = React.memo(
                         />
                         <span>{t("inspector.affinityTitle")}</span>
                       </span>
-                      {affinityOpen ? (
-                        <ChevronDown className="w-3.5 h-3.5 opacity-70" />
-                      ) : (
-                        <ChevronRight className="w-3.5 h-3.5 opacity-70" />
-                      )}
+                      <ChevronRight
+                        className={`w-3.5 h-3.5 opacity-70 transition-transform duration-200 ${
+                          affinityOpen ? "rotate-90" : ""
+                        }`}
+                      />
                     </button>
 
+                    <AnimatePresence initial={false}>
                     {affinityOpen && (
+                      <motion.div
+                        key="affinity-body"
+                        initial={{ height: 0, opacity: 0 }}
+                        animate={{ height: "auto", opacity: 1 }}
+                        exit={{ height: 0, opacity: 0 }}
+                        transition={{ duration: 0.2, ease: INSPECTOR_EASE_OPEN }}
+                        className="overflow-hidden"
+                      >
                       <div
                         className="p-3 border-t flex flex-col gap-2.5"
                         style={{ borderColor: "var(--border-subtle)" }}
@@ -992,7 +1037,9 @@ export const ProcessInspector: React.FC<ProcessInspectorProps> = React.memo(
                           </>
                         ) : null}
                       </div>
+                      </motion.div>
                     )}
+                    </AnimatePresence>
                     </div>
                   )}
 
@@ -1004,21 +1051,21 @@ export const ProcessInspector: React.FC<ProcessInspectorProps> = React.memo(
                       borderColor: "var(--border-subtle)",
                     }}
                   >
-                    <div className="flex justify-between">
-                      <span style={{ color: "var(--text-muted)" }}>
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="truncate" style={{ color: "var(--text-muted)" }}>
                         {t("inspector.diskRw")}
                       </span>
-                      <span className="font-medium tabular-nums">
+                      <span className="font-medium tabular-nums shrink-0 whitespace-nowrap">
                         {formatSpeed(process.diskReadBytesPerSec)} /{" "}
                         {formatSpeed(process.diskWriteBytesPerSec)}
                       </span>
                     </div>
-                    <div className="flex justify-between">
-                      <span style={{ color: "var(--text-muted)" }}>
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="truncate" style={{ color: "var(--text-muted)" }}>
                         {t("inspector.netRw")}
                       </span>
                       <span
-                        className="font-medium tabular-nums"
+                        className="font-medium tabular-nums shrink-0 whitespace-nowrap"
                         style={{
                           color:
                             process.netRxBytesPerSec + process.netTxBytesPerSec >= 100
@@ -1031,32 +1078,32 @@ export const ProcessInspector: React.FC<ProcessInspectorProps> = React.memo(
                           : "–"}
                       </span>
                     </div>
-                    <div className="flex justify-between">
-                      <span style={{ color: "var(--text-muted)" }}>
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="truncate" style={{ color: "var(--text-muted)" }}>
                         {t("inspector.totalIo")}
                       </span>
-                      <span className="font-medium tabular-nums">
+                      <span className="font-medium tabular-nums shrink-0 whitespace-nowrap">
                         {formatBytes(process.totalDiskReadBytes)} /{" "}
                         {formatBytes(process.totalDiskWriteBytes)}
                       </span>
                     </div>
-                    <div className="flex justify-between">
-                      <span style={{ color: "var(--text-muted)" }}>
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="truncate" style={{ color: "var(--text-muted)" }}>
                         {t("inspector.threadsHandles")}
                       </span>
-                      <span className="font-medium tabular-nums">
+                      <span className="font-medium tabular-nums shrink-0 whitespace-nowrap">
                         {process.threadCount ?? "–"} /{" "}
                         {process.handleCount ?? "–"}
                       </span>
                     </div>
                     {parentProc && (
-                      <div className="flex justify-between items-center">
-                        <span style={{ color: "var(--text-muted)" }}>
+                      <div className="flex justify-between items-center gap-2">
+                        <span className="shrink-0" style={{ color: "var(--text-muted)" }}>
                           {t("inspector.parentProcess")}
                         </span>
                         <button
                           onClick={() => onSelectPid(parentProc.pid)}
-                          className="font-medium hover:underline cursor-pointer"
+                          className="font-medium hover:underline cursor-pointer truncate tabular-nums"
                           style={{ color: "var(--accent-cpu)" }}
                         >
                           {parentProc.name} ({parentProc.pid})
@@ -1627,8 +1674,10 @@ export const ProcessInspector: React.FC<ProcessInspectorProps> = React.memo(
                   ) : null}
                 </div>
               )}
+              </motion.div>
             </div>
-          </motion.aside>
+            </aside>
+          </motion.div>
         )}
       </AnimatePresence>
     );

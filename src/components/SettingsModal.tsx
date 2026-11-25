@@ -64,13 +64,17 @@ const ToggleSwitch: React.FC<{
     aria-label={label}
     disabled={disabled}
     onClick={onChange}
-    className="w-9 h-5 rounded-full p-0.5 transition-colors cursor-pointer flex items-center shrink-0 disabled:opacity-50 disabled:cursor-wait"
+    className="w-9 h-5 rounded-full p-0.5 transition-colors duration-200 cursor-pointer flex items-center shrink-0 disabled:opacity-50 disabled:cursor-wait"
     style={{
       backgroundColor: checked ? "var(--accent-cpu)" : "var(--border-strong)",
-      justifyContent: checked ? "flex-end" : "flex-start",
     }}
   >
-    <span className="w-4 h-4 rounded-full bg-white shadow-sm block" />
+    <span
+      className="w-4 h-4 rounded-full bg-white shadow-sm block transition-transform duration-200 ease-out"
+      style={{
+        transform: checked ? "translateX(16px)" : "translateX(0px)",
+      }}
+    />
   </button>
 );
 
